@@ -3,7 +3,9 @@ Synchronize Minecraft mods between a server and client with minimum effort
 
 ![ServerSync Client GUI](https://github.com/BoltMk0/mc_serversync/raw/main/screenshots/serversync_gui.png)
 
-[Download ServerSync (python wheel)](https://github.com/BoltMk0/mc_serversync/raw/main/dist/serversync-0.2-py3-none-any.whl)
+[Download Files][release]{: .btn }
+
+[release]: https://github.com/BoltMk0/mc_serversync/releases/latest
 
 ## Getting Started
 #### Pre-requesites:
@@ -17,14 +19,14 @@ environment variables" is checked.
     Quick link: [Download Python 3.8.9](https://www.python.org/ftp/python/3.8.9/python-3.8.9-amd64.exe)
 
 #### Installation Instructions (Client/User)
-- Download the latest dist of ServerSync
+- [Download the latest release of ServerSync][release]
 - Open a Command Prompt window **as administrator**
 - Install the serversync module using `python -m pip install <path-to-serversync-module>.whl`
 - Install commands to the context menu (right click) with `python -m serversync --install`,
 then entering "1" when prompted.
 
 #### Installation Instructions (Server/Administrator)
-- Download the latest dist of ServerSync
+- [Download the latest release of ServerSync][release]
 - Open a Command Prompt window / terminal
 - Install the serversync module using `python -m pip install <path-to-serversync-module>.whl`
 - cd into your server mods folder, then run `python -m serversync --server`
