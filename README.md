@@ -3,7 +3,7 @@ Synchronize Minecraft mods between a server and client with minimum effort
 
 ![ServerSync Client GUI](https://github.com/BoltMk0/mc_serversync/raw/main/screenshots/serversync_gui.png)
 
-[Download Files][release]{: .btn }
+[Download Files][release]
 
 [release]: https://github.com/BoltMk0/mc_serversync/releases/latest
 
