@@ -26,6 +26,7 @@ if __name__ == '__main__':
     ap.add_argument('--setProfile', action='store_const', const='SET_PROFILE', dest='mode',
                     help='Set client profile on server to determine server/client-specific mods')
     ap.add_argument('--port', '-p', action='store', type=int, help='Server port')
+    ap.add_argument('--passkey', action='store', type=str, help='Server passkey (used for setting client profile)')
     ap.add_argument('--hostname', '-ip', action='store', type=str, help='Server ip address/hostname')
 
     pargs, unknown = ap.parse_known_args(sys.argv[1:])
@@ -152,9 +153,7 @@ if __name__ == '__main__':
         print('[OK] Sync completed!')
 
     elif pargs.mode == 'SERVER':
-        if pargs.port is None:
-            pargs.port = DEFAULT_SERVER_PORT
-        server = ServerSyncServer(pargs.port)
+        server = ServerSyncServer(pargs.port, pargs.passkey)
         server.run()
 
     elif pargs.mode == 'INSTALL':
@@ -202,8 +201,30 @@ if __name__ == '__main__':
         profile = {mid: modlist[mid].to_dict() for mid in modlist}
         cli = Client()
         print('Connecting & Uploading to server... ', end='')
-        ret = cli.send(json.dumps({'type': 'set_profile', 'mods': profile}).encode())
-        print('[OK]')
+        to_send = {'type': 'set_profile', 'mods': profile}
+        if pargs.passkey is not None:
+            to_send['passkey'] = pargs.passkey
+
+        ret = cli.send(json.dumps(to_send).encode())
+        if ret is not None:
+            if ret['type'] == 'error':
+                if 'code' in ret and ret['code'] == 1:
+                    passkey = input('Enter passkey: ')
+                    to_send['passkey'] = passkey
+                    ret = cli.send(json.dumps(to_send).encode())
+                    if ret is not None:
+                        if ret['type'] == 'error':
+                            print('[ER] Error when uploading to server: {}'.format(ret['message']), file=sys.stderr)
+                            exit(ret['code'] if 'code' in ret else -1)
+                        elif ret['type'] != 'success':
+                            print('[WN] Unhandled response: {}'.format(ret))
+                else:
+                    print('[ER]')
+                    print(ret['message'])
+                    exit(-1)
+            elif ret['type'] != 'success':
+                print('[WN] Unhandled response: {}'.format(ret))
+        print('[OK]', flush=True)
 
         server_modlist = cli.get_server_mod_list()
         optional = server_modlist['optional']
@@ -216,7 +237,6 @@ if __name__ == '__main__':
         print('Client-side mods:')
         for mid in optional:
             print('  - {}'.format(modlist[mid].name))
-
 
         print('Server-side mods:')
         for mid in server_side:

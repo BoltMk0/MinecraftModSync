@@ -4,10 +4,22 @@ from socket import timeout
 
 
 class ServerSyncServer:
-    def __init__(self, port: int = None):
+    def __init__(self, port: int = None, passkey=None):
         self.conf = ClientConfig()
         if port is not None:
             self.conf.server_port = port
+            self.conf.save()
+            print('[OK] Server port updated to {}.'.format(port))
+
+        if 'passkey' not in self.conf:
+            self.conf['passkey'] = None
+
+        if passkey is not None:
+            self.conf['passkey'] = passkey
+            self.conf.save()
+            print('[OK] Server passkey set to "{}".'.format(passkey))
+
+        self.passkey = self.conf['passkey']
 
     @property
     def client_side_mod_ids(self):
@@ -111,6 +123,20 @@ class ServerSyncServer:
                                 if 'type' in data:
                                     if data['type'] == 'set_profile':
 
+                                        if self.passkey is not None:
+                                            if 'passkey' not in data:
+                                                print('[WN] Client profile set failed due to missing passkey')
+                                                cli.send(json.dumps({'type': 'error',
+                                                                     'code': 1,
+                                                                     'message': 'Passkey missing'}).encode())
+                                                raise ValueError('Missing passkey')
+                                            if data['passkey'] != self.passkey:
+                                                print('[WN] Client profile set failed due to invalid passkey: "{}"'.format(data['passkey']))
+                                                cli.send(json.dumps({'type': 'error',
+                                                                     'code': 2,
+                                                                     'message': 'Passkey mismatch'}).encode())
+                                                raise ValueError('Invalid passkey: {}'.format(data['passkey']))
+
                                         print('Handling set_profile request')
                                         if 'mods' in data:
                                             client_mods = data['mods']
@@ -131,6 +157,8 @@ class ServerSyncServer:
                                             self.conf[CONF_KEY_KNOWN_SERVER_SIDE_MODS] = server_only_mod_ids
 
                                             self.conf.save()
+
+                                            cli.send(json.dumps({'type': 'success'}).encode())
 
                                             print('[OK] Client profile updated')
                                             modlist = list_mods_in_dir()

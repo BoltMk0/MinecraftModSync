@@ -25,7 +25,7 @@ environment variables" is checked.
     - Type "python -m pip install " then drag and drop the .whl file into the cmd window.
     The command should look something like:
     
-        `python -m pip install "C:\Users\<user>\Downloads\serversync-0.2-py3-none-any.whl"`
+        `python -m pip install "C:\Users\<user>\Downloads\serversync-0.3-py3-none-any.whl"`
 - **Install commands to the context (right click) menu**
     - Open a Command Prompt window **as administrator** (right click Start menu and select "Command Prompt (Admin)")
     - Run `python -m serversync --install`, and enter "1" when prompted.
@@ -40,11 +40,19 @@ environment variables" is checked.
 - Open a Command Prompt window / terminal
 - Install the serversync module using `python -m pip install <path-to-serversync-module>.whl`
 - cd into your server mods folder, then run `python -m serversync --server`
+- Forward TCP traffic for the selected port (default 25567) to your machine from your router.
+You can change this using the '--port <int>' argument when running the server. 
 
+##### Determining server-side and client-side mods
 The server uses a "Client Profile" to determine which mods are server-side, and which are
-client-side (the remainder being shared/required). To set this, open a terminal/command prompt
+client-side (the remainder being required mods). To set this, open a terminal/command prompt
 in your client mods folder, and run `python -m serversync --setProfile`. Upon completion
 you will see a summary of any single-sided mods.
+
+##### Passkeys
+Server admins can chose to set a passkey to protect the server from unwanted profile changes.
+Set the passkey by using the '--passkey <str>' flag when starting the server (once only), and 
+use the same flag from the client to attach the passkey to profile set requests. 
 
 
 ## Usage Guide
