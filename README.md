@@ -1,6 +1,8 @@
 # ServerSync
 Synchronize Minecraft mods between a server and client with minimum effort
 
+![ServerSync Client GUI](https://github.com/BoltMk0/mc_serversync/raw/main/screenshots/serversync_gui.png)
+
 [Download ServerSync (python wheel)](https://github.com/BoltMk0/mc_serversync/raw/main/dist/serversync-0.2-py3-none-any.whl)
 
 ## Getting Started
@@ -42,6 +44,10 @@ repeat the steps in Installation Instructions (Client/User).
 The client app will show, and automatically start scanning if it can connect to the server.
 If it can't see the server, an error message will pop up. Close this, and click the "Settings"
 button. Make sure the ip address and port is correct, hit save, and try again.
+
+![ServerSync Settings GUI](https://github.com/BoltMk0/mc_serversync/raw/main/screenshots/serversync_config_gui.png)
+
+
 
 After the scan completes, a summary of mods that need to be added, deleted and updated will be shown.
 Read through the mods to be deleted (at the top of the list) carefully, some of these could
