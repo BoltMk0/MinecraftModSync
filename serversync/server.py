@@ -83,9 +83,8 @@ class ServerSyncServer:
                         print('Handling ping request')
                         cli.send('pong'.encode())
                     else:
-
-                        print('Handling list request')
                         if msg == 'list':
+                            print('Handling list request')
                             cli.send(json.dumps({'required': {mid: modlist[mid].to_dict() for mid in modlist},
                                                  'optional': self.client_side_mod_ids,
                                                  'server-side': self.server_side_mod_ids}).encode())
