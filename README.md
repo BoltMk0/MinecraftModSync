@@ -20,10 +20,15 @@ environment variables" is checked.
 
 #### Installation Instructions (Client/User)
 - [Download the latest release of ServerSync][release]
-- Open a Command Prompt window **as administrator**
-- Install the serversync module using `python -m pip install <path-to-serversync-module>.whl`
-- Install commands to the context menu (right click) with `python -m serversync --install`,
-then entering "1" when prompted.
+- **Install ServerSync using pip**
+    - Open a command prompt window (right click Start menu and select "Command Prompt")
+    - Type "python -m pip install " then drag and drop the .whl file into the cmd window.
+    The command should look something like:
+    
+        `python -m pip install "C:\Users\<user>\Downloads\serversync-0.2-py3-none-any.whl"`
+- **Install commands to the context (right click) menu**
+    - Open a Command Prompt window **as administrator** (right click Start menu and select "Command Prompt (Admin)")
+    - Run `python -m serversync --install`, and enter "1" when prompted.
 
 #### Installation Instructions (Server/Administrator)
 - [Download the latest release of ServerSync][release]
