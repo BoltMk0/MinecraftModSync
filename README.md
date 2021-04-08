@@ -30,6 +30,11 @@ environment variables" is checked.
     - Open a Command Prompt window **as administrator** (right click Start menu and select "Command Prompt (Admin)")
     - Run `python -m serversync --install`, and enter "1" when prompted.
 
+    Done! Now you have access to serversync from any folder by right-clicking and selecting "Run ServerSync". 
+    
+    *Tip: Serversync stores unique configurations for each folder you use it from (i.e. each mod folder 
+    you have can sync to a different server).*
+
 #### Installation Instructions (Server/Administrator)
 - [Download the latest release of ServerSync][release]
 - Open a Command Prompt window / terminal
