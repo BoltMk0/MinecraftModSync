@@ -47,7 +47,7 @@ class Client:
             sock.close()
 
         if len(ret) == 0:
-            raise ValueError('Server didnt respond')
+            raise ConnectionRefusedError('Server didnt respond')
         return Message.decode(ret)
 
     def get_server_mod_list(self):
@@ -78,14 +78,17 @@ class Client:
             while True:
                 try:
                     buf = sock.recv(min(DOWNLOAD_BUFFER_SIZE, bytes_remaining))
-                except error:
                     if len(buf) == 0:
+                        # Socket closed
                         break
+                except error:
+                    break
                 except:
                     break
 
                 if bytes_read >= modsize:
                     break
+
                 file.write(buf)
                 bytes_read += len(buf)
                 bytes_remaining -= len(buf)
@@ -93,7 +96,7 @@ class Client:
                     self.on_progress_cb(bytes_read, modsize)
         if bytes_read != modsize and modsize > 0:
             remove(output_filepath)
-            raise ValueError('Incomplete download')
+            raise ValueError('Incomplete download! Expected {} bytes, got {}.'.format(modsize, bytes_read))
         sock.close()
 
 
@@ -183,10 +186,6 @@ class ClientGUI(QWidget):
         def set_progress(self, modid, prog):
             self.mod_entries[modid].operation_label.setText('{}%'.format(prog))
 
-    class ScannerState:
-        READY = 0
-        RUNNING = 1
-        CANCELLED = 2
 
     def __init__(self):
         super(ClientGUI, self).__init__()
@@ -227,7 +226,7 @@ class ClientGUI(QWidget):
         self.rescan_btn.setText('Re-Scan')
         self.rescan_btn.clicked.connect(self._on_rescan_button_pressed)
         self.lower_btn_grid_layout.addWidget(self.rescan_btn)
-        self._scanner_state = self.ScannerState.READY
+        self._scanner_running = False
 
         self.start_btn = QPushButton()
         self.start_btn.setText('Start')
@@ -315,13 +314,18 @@ class ClientGUI(QWidget):
 
     def _on_download_progress(self, id, prog):
         self.modlist_widget.set_progress(id, prog)
-        self.upper_text.setText('Running: {} ({}%)'.format(id, prog))
+        self.upper_text.setText('Downloading: {} ({}%)'.format(id, prog))
 
-    def _on_download_complete(self):
-        self.on_show_message_box('Done', 'Processed {} mods ({} Downloaded, {} Updated, {} Deleted)'.format(
-            self._deleted_counter + self._updated_counter + self._downloaded_counter,
-            self._downloaded_counter, self._updated_counter, self._deleted_counter
-        ), False)
+    def _on_download_complete(self, error: bool=False):
+        if not error:
+            self.on_show_message_box('Done', 'Processed {} mods ({} Downloaded, {} Updated, {} Deleted)'.format(
+                self._deleted_counter + self._updated_counter + self._downloaded_counter,
+                self._downloaded_counter, self._updated_counter, self._deleted_counter
+            ), False)
+            self.upper_text.setText('Finished. Processed {} mods ({} Downloaded, {} Updated, {} Deleted)'.format(
+                self._deleted_counter + self._updated_counter + self._downloaded_counter,
+                self._downloaded_counter, self._updated_counter, self._deleted_counter
+            ))
         self.rescan_btn.setEnabled(True)
 
     def _start_updating(self):
@@ -362,20 +366,18 @@ class ClientGUI(QWidget):
         self.modloader.finished.connect(self._on_download_complete)
         # self.modloader.finished.connect(self._on_modlist_load)
         self.modloader.progress.connect(self._on_download_progress)
+        self.modloader.onErrorSignal.connect(self.on_show_message_box)
         self.thread.start()
 
     def _on_rescan_button_pressed(self):
-        if self._scanner_state == self.ScannerState.RUNNING:
+        if self._scanner_running:
             # Cancel scan
-            # self.modloader.running = False
-            self._scanner_state = self.ScannerState.CANCELLED
             self.modloader.cancelScanSignal.emit()
         else:
             self.modlist_widget.clear_table()
             client = Client()
             # self.rescan_btn.setEnabled(False)
             self.rescan_btn.setText('Cancel')
-            self._scanner_state = self.ScannerState.RUNNING
             try:
                 self.server_modlist = client.get_server_mod_list()
 
@@ -384,12 +386,13 @@ class ClientGUI(QWidget):
                 self.modloader.moveToThread(self.thread)
                 self.thread.started.connect(self.modloader.run)
                 self.modloader.onLocalDirScanned.connect(self.onLocalDirScanned)
-                self.modloader.onErrorSignal.connect(self.showMessageBox)
+                self.modloader.onErrorSignal.connect(self.on_show_message_box)
                 self.modloader.finished.connect(self.thread.quit)
                 self.modloader.finished.connect(self.thread.deleteLater)
                 self.modloader.finished.connect(self._on_modloader_finish)
                 self.modloader.progress.connect(self.report_progress)
                 self.thread.start()
+                self._scanner_running = True
             except ConnectionRefusedError as e:
                 self.rescan_btn.setText('Re-Scan')
                 self.rescan_btn.setEnabled(True)
@@ -398,13 +401,12 @@ class ClientGUI(QWidget):
     def report_progress(self, prog):
         self.upper_text.setText('Scanning... {}%'.format(prog))
 
-    def _on_modloader_finish(self):
-        if self._scanner_state == self.ScannerState.RUNNING:
-            self._scanner_state = self.ScannerState.READY
-        else:
+    def _on_modloader_finish(self, interrupted: bool):
+        if interrupted:
             self.upper_text.setText('Scan cancelled')
 
         self.rescan_btn.setText('Re-Scan')
+        self._scanner_running = False
         self.modloader.deleteLater()
 
     def set_message(self, msg: str):
@@ -412,8 +414,9 @@ class ClientGUI(QWidget):
 
 
 class ModDownloader(QObject):
-    finished = pyqtSignal()
+    finished = pyqtSignal(bool)     # bool is True on Error
     progress = pyqtSignal(str, int)
+    onErrorSignal = pyqtSignal(str, str, bool)
 
     def __init__(self, mod_ids):
         super().__init__()
@@ -428,12 +431,20 @@ class ModDownloader(QObject):
             try:
                 client.download_file(mod_id, '.')
             except error as e:
-                self.parent.showMessageBox.emit('Failed to connect to server', 'Failed to connect to server at {}:{}\n {}'.format(
+                self.onErrorSignal.emit('Failed to connect to server', 'Failed to connect to server at {}:{}\n {}'.format(
                     client.conf.server_ip, client.conf.server_port, e), False)
-                self.finished.emit()
+                self.finished.emit(True)
+                return
+            except ValueError as e:
+                self.onErrorSignal.emit('Download Error', str(e), False)
+                self.finished.emit(True)
+                return
+            except Exception as e:
+                self.onErrorSignal.emit('Unknown Error', str(e), True)
+                self.finished.emit(True)
                 return
 
-        self.finished.emit()
+        self.finished.emit(False)
 
     def _on_progress_2(self, cur, total):
         self._on_progress(int(100*cur/total))
@@ -444,7 +455,7 @@ class ModDownloader(QObject):
 
 class ModLoader(QObject):
     # Signal outputs
-    finished = pyqtSignal()
+    finished = pyqtSignal(bool) # bool is True if ModLiader was cancelled
     onLocalDirScanned = pyqtSignal(dict)
     progress = pyqtSignal(int)
     onErrorSignal = pyqtSignal(str, str, bool)
@@ -496,8 +507,7 @@ class ModLoader(QObject):
 
         if self.running:
             # No interrupt, scan complete
-
             self.onLocalDirScanned.emit(to_ret)
 
-        self.finished.emit()
+        self.finished.emit(not self.running)
 
