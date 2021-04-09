@@ -148,7 +148,7 @@ class ClientConfig(dict):
 
     def reload(self):
         self.clear()
-        self.update({'server_port': DEFAULT_SERVER_PORT, 'server_ip': 'marcobolt.com'})
+        self.update({'server_port': DEFAULT_SERVER_PORT, 'server_ip': 'localhost'})
         if path.exists(self.filepath):
             with open(self.filepath, 'r') as file:
                 self.update(json.loads(file.read()))
