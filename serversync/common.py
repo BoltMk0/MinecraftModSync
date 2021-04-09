@@ -2,6 +2,7 @@ from os import path, listdir, getcwd, remove
 import zipfile
 import json
 import toml
+from serversync import VERSION
 
 
 DEFAULT_SERVER_PORT = 25567
@@ -111,9 +112,13 @@ class ModInfo:
 
 
 class ClientConfig(dict):
-    def __init__(self):
+    def __init__(self, filepath=CONFIG_FILENAME):
         super().__init__()
+        self.filepath = filepath
         self.reload()
+
+    def exists(self):
+        return path.exists(self.filepath)
 
     @property
     def server_ip(self):
@@ -138,14 +143,14 @@ class ClientConfig(dict):
         return self.server_ip, self.server_port
 
     def save(self):
-        with open(CONFIG_FILENAME, 'w') as file:
+        with open(self.filepath, 'w') as file:
             file.write(json.dumps(self))
 
     def reload(self):
         self.clear()
         self.update({'server_port': DEFAULT_SERVER_PORT, 'server_ip': 'marcobolt.com'})
-        if path.exists(CONFIG_FILENAME):
-            with open(CONFIG_FILENAME, 'r') as file:
+        if path.exists(self.filepath):
+            with open(self.filepath, 'r') as file:
                 self.update(json.loads(file.read()))
 
 
@@ -175,3 +180,190 @@ def list_mods_in_dir(dirpath='.', custom_progress_callback = None) -> [ModInfo]:
 def print_progress(cur, total):
     percent = int(100 * cur / total)
     print('\b\b\b\b{:>3}%'.format(percent), end='', flush=True)
+
+
+class ReturnedErrorMessageError(Exception):
+    pass
+
+
+class UnexpectedResponseError(Exception):
+    pass
+
+
+class Message(dict):
+    TYPE_STR = 'message'
+    KEY_TYPE = 'type'
+
+    def __init__(self, type: str = None):
+        if type is None:
+            type = self.TYPE_STR
+        super().__init__()
+        self.type = type
+
+    @property
+    def type(self):
+        return self[self.KEY_TYPE]
+
+    @type.setter
+    def type(self, t: str):
+        self[self.KEY_TYPE] = t
+
+    @staticmethod
+    def decode(data: bytes):
+        if data.endswith(bytes(1)):
+            # Trim off null byte
+            data = data[:-1]
+        d = json.loads(data.decode())
+        to_ret = messageTypeToConstructor.get(d['type'], Message)()
+        to_ret.update(d)
+        return to_ret
+
+    def encode(self):
+        return json.dumps(self).encode() + bytes(1)
+
+
+class SuccessMessage(Message):
+    TYPE_STR = 'success'
+
+
+class ErrorMessage(Message):
+    TYPE_STR = 'error'
+    KEY_CODE = 'code'
+    KEY_MESSAGE = 'message'
+    ERROR_CODE_UNKNOWN = -1
+    ERROR_CODE_UNRECOGNISED_REQUEST = 1
+
+    def __init__(self, code: int = -1, message: str = 'An error occored'):
+        super().__init__(type='error')
+        self.type = self.TYPE_STR
+        self.code = code
+        self.message = message
+
+    @property
+    def message(self):
+        return self[self.KEY_MESSAGE]
+
+    @message.setter
+    def message(self, m: str):
+        self[self.KEY_MESSAGE] = m
+
+    @property
+    def code(self):
+        return self[self.KEY_CODE]
+
+    @code.setter
+    def code(self, c: int):
+        self[self.KEY_CODE] = c
+
+
+class GetRequest(Message):
+    TYPE_STR = 'get'
+    KEY_ID = 'id'
+    ERROR_NOT_FOUND = 404
+
+    def __init__(self, modid=None):
+        super().__init__(self.TYPE_STR)
+        self[self.KEY_ID] = modid
+
+
+class GetResponse(SuccessMessage):
+    TYPE_STR = 'mod'
+    KEY_MOD_DATA = 'mod'
+    DATA_KEY_ID = 'id'
+    DATA_KEY_NAME = 'name'
+    DATA_KEY_VERSION = 'version'
+
+    def __init__(self, mod_info: ModInfo = None):
+        super().__init__()
+        self[self.KEY_MOD_DATA] = {self.DATA_KEY_ID: None, self.DATA_KEY_NAME: None, self.DATA_KEY_VERSION: None}
+        if mod_info is not None:
+            self[self.KEY_MOD_DATA].update(mod_info.to_dict())
+
+    def version(self):
+        return self[self.KEY_MOD_DATA][self.DATA_KEY_VERSION]
+
+    @property
+    def name(self):
+        return self[self.KEY_MOD_DATA][self.DATA_KEY_NAME]
+
+    @property
+    def id(self):
+        return self[self.KEY_MOD_DATA][self.DATA_KEY_ID]
+
+
+class ListRequest(Message):
+    TYPE_STR = 'list'
+
+
+class ListResponse(SuccessMessage):
+    TYPE_STR = 'modlist'
+    KEY_REQUIRED_MODS = 'required'
+    KEY_CLIENT_SIDE_MODS = 'optional'
+    KEY_SERVER_SIDE_MODS = 'serverside'
+
+    def __init__(self, required={}, clientside=[], serverside=[]):
+        super().__init__()
+        self[self.KEY_REQUIRED_MODS] = required
+        self[self.KEY_CLIENT_SIDE_MODS] = clientside
+        self[self.KEY_SERVER_SIDE_MODS] = serverside
+
+    @property
+    def clientside_mods(self):
+        return self[self.KEY_CLIENT_SIDE_MODS]
+
+    @property
+    def required_mods(self):
+        return self[self.KEY_REQUIRED_MODS]
+
+    @property
+    def serverside_mods(self):
+        return self[self.KEY_REQUIRED_MODS]
+
+    @clientside_mods.setter
+    def clientside_mods(self, modids: [str]):
+        self[self.KEY_CLIENT_SIDE_MODS] = modids
+
+    @serverside_mods.setter
+    def serverside_mods(self, modids: [str]):
+        self[self.KEY_CLIENT_SIDE_MODS] = modids
+
+    @required_mods.setter
+    def required_mods(self, mods: dict):
+        self[self.KEY_REQUIRED_MODS] = mods
+
+
+class SetProfileRequest(Message):
+    TYPE_STR = 'set_profile'
+    KEY_PASSKEY = 'passkey'
+    KEY_CLIENT_MODS = 'mods'
+    ERROR_CODE_MISSING_PASSKEY = 100
+    ERROR_CODE_INVALID_PASSKEY = 101
+
+    def __init__(self, client_mods={}, passkey=None):
+        super().__init__()
+        self[self.KEY_PASSKEY] = passkey
+        self[self.KEY_CLIENT_MODS] = client_mods
+
+
+class PingMessage(Message):
+    TYPE_STR = 'ping'
+    KEY_VERSION = 'version'
+
+    def __init__(self):
+        super().__init__()
+        self[self.KEY_VERSION] = VERSION
+
+
+class DownloadRequest(GetRequest):
+    TYPE_STR = 'download'
+
+
+messageTypeToConstructor = {ErrorMessage.TYPE_STR: ErrorMessage,
+                            SuccessMessage.TYPE_STR: SuccessMessage,
+                            GetRequest.TYPE_STR: GetRequest,
+                            GetResponse.TYPE_STR: GetResponse,
+                            ListRequest.TYPE_STR: ListRequest,
+                            ListResponse.TYPE_STR: ListResponse,
+                            DownloadRequest.TYPE_STR: DownloadRequest,
+                            SetProfileRequest.TYPE_STR: SetProfileRequest}
+

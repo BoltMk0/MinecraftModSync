@@ -24,38 +24,42 @@ class Client:
 
     def ping(self):
         try:
-            self._make_sock()
+            self.send()
             return True
         except error:
             return False
 
-    def send(self, message: bytes):
+    def send(self, message: Message):
         sock = self._make_sock()
-        # Terminate with null-byte to signal end of message
-        sock.send(message + bytes(1))
 
-        ret = ''
+        sock.send(message.encode())
+
+        ret = b''
         try:
             while True:
                 buf = sock.recv(INPUT_BUFFER_SIZE)
                 if len(buf) == 0:
                     break
-                ret += buf.decode()
+                ret += buf
         except timeout:
             pass
         finally:
             sock.close()
-        if len(ret) > 0:
-            return json.loads(ret)
+
+        if len(ret) == 0:
+            raise ValueError('Server didnt respond')
+        return Message.decode(ret)
 
     def get_server_mod_list(self):
-        return self.send('list'.encode())
+        return self.send(ListRequest())
 
     def get_mod_info(self, modid):
-        ret = self.send('get {}'.format(modid).encode())
-        if ret is None or len(ret) == 0:
-            raise ValueError('No data received!')
-        return ret
+        ret = self.send(GetRequest(modid))
+        if ret.type == ErrorMessage.TYPE_STR:
+            raise ReturnedErrorMessageError(ret)
+        elif ret.type != GetResponse.TYPE_STR:
+            raise UnexpectedResponseError(ret)
+        return ret[GetResponse.KEY_MOD_DATA]
 
     def download_file(self, modid, output_dirpath):
         info = self.get_mod_info(modid)
@@ -70,7 +74,7 @@ class Client:
         with open(output_filepath, 'wb') as file:
             sock = self._make_sock()
             sock.settimeout(1)
-            sock.send('download {}'.format(modid).encode() + bytes(1))
+            sock.send(DownloadRequest(modid).encode())
             while True:
                 try:
                     buf = sock.recv(min(DOWNLOAD_BUFFER_SIZE, bytes_remaining))
@@ -179,10 +183,16 @@ class ClientGUI(QWidget):
         def set_progress(self, modid, prog):
             self.mod_entries[modid].operation_label.setText('{}%'.format(prog))
 
+    class ScannerState:
+        READY = 0
+        RUNNING = 1
+        CANCELLED = 2
+
     def __init__(self):
         super(ClientGUI, self).__init__()
 
         self.conf = ClientConfig()
+
         if 'keep' not in self.conf:
             self.conf['keep'] = []
 
@@ -215,8 +225,9 @@ class ClientGUI(QWidget):
 
         self.rescan_btn = QPushButton()
         self.rescan_btn.setText('Re-Scan')
-        self.rescan_btn.clicked.connect(self._refresh_list)
+        self.rescan_btn.clicked.connect(self._on_rescan_button_pressed)
         self.lower_btn_grid_layout.addWidget(self.rescan_btn)
+        self._scanner_state = self.ScannerState.READY
 
         self.start_btn = QPushButton()
         self.start_btn.setText('Start')
@@ -234,7 +245,12 @@ class ClientGUI(QWidget):
         self.to_delete = []
         self.to_download = []
 
-        self._refresh_list()
+        if self.conf.exists():
+            self._on_rescan_button_pressed()
+        else:
+            # First time setup
+            self.conf.save()        # Create config file
+            self._show_settings()
 
     def on_show_message_box(self, title, message, error):
         QMessageBox.about(self, title, message)
@@ -251,8 +267,6 @@ class ClientGUI(QWidget):
         self.conf.save()
 
     def _on_local_dir_scanned(self, mods: dict):
-        self.rescan_btn.setEnabled(True)
-        self.start_btn.setEnabled(True)
         self.local_modlist = mods
 
         required_mods = self.server_modlist['required']
@@ -273,30 +287,35 @@ class ClientGUI(QWidget):
                 self.to_download.append(id)
 
         if len(self.to_update) + len(self.to_download) + len(self.to_delete) == 0:
-            QMessageBox.about(self, 'Up to date', 'This mod folder is up to date.')
-            self.close()
+            # QMessageBox.about(self, 'Up to date', 'This mod folder is up to date (scanned {} mods).'.format(len(self.local_modlist)))
+            self.upper_text.setText('Scanned! This mod folder is up to date (scanned {} mods)'.format(len(self.local_modlist)))
+        else:
+            self.upper_text.setText('Scanned {} mods'.format(len(self.local_modlist)))
+            to_keep = self.conf['keep']
 
-        to_keep = self.conf['keep']
+            for id in self.to_delete:
+                mod = self.local_modlist[id]
+                self.modlist_widget.add_mod(id, mod.name, ClientGUI.PROCESS_DEL, mod.version, checked=id not in to_keep, on_state_change_cb=self._on_checkbox_state_changed)
 
-        for id in self.to_delete:
-            mod = self.local_modlist[id]
-            self.modlist_widget.add_mod(id, mod.name, ClientGUI.PROCESS_DEL, mod.version, checked=id not in to_keep, on_state_change_cb=self._on_checkbox_state_changed)
+            for id in self.to_update:
+                mod = self.local_modlist[id]
+                new_mod = required_mods[id]
+                self.modlist_widget.add_mod(id, mod.name, ClientGUI.PROCESS_UPDATE, '{} -> {}'.format(mod.version, new_mod['version']), checked=id not in to_keep, on_state_change_cb=self._on_checkbox_state_changed)
 
-        for id in self.to_update:
-            mod = self.local_modlist[id]
-            new_mod = required_mods[id]
-            self.modlist_widget.add_mod(id, mod.name, ClientGUI.PROCESS_UPDATE, '{} -> {}'.format(mod.version, new_mod['version']), checked=id not in to_keep, on_state_change_cb=self._on_checkbox_state_changed)
+            for id in self.to_download:
+                mod = required_mods[id]
+                self.modlist_widget.add_mod(id, mod['name'], ClientGUI.PROCESS_ADD, mod['version'], checked=id not in to_keep, on_state_change_cb=self._on_checkbox_state_changed)
 
-        for id in self.to_download:
-            mod = required_mods[id]
-            self.modlist_widget.add_mod(id, mod['name'], ClientGUI.PROCESS_ADD, mod['version'], checked=id not in to_keep, on_state_change_cb=self._on_checkbox_state_changed)
-
-        self.start_btn.setEnabled(True)
+            self.start_btn.setEnabled(True)
 
     def _show_settings(self):
         self.config_session = SettingsWidget()
         self.config_session.setWindowTitle('Settings')
         self.config_session.show()
+
+    def _on_download_progress(self, id, prog):
+        self.modlist_widget.set_progress(id, prog)
+        self.upper_text.setText('Running: {} ({}%)'.format(id, prog))
 
     def _on_download_complete(self):
         self.on_show_message_box('Done', 'Processed {} mods ({} Downloaded, {} Updated, {} Deleted)'.format(
@@ -342,38 +361,51 @@ class ClientGUI(QWidget):
         self.modloader.finished.connect(self.thread.deleteLater)
         self.modloader.finished.connect(self._on_download_complete)
         # self.modloader.finished.connect(self._on_modlist_load)
-        self.modloader.progress.connect(self.modlist_widget.set_progress)
+        self.modloader.progress.connect(self._on_download_progress)
         self.thread.start()
 
+    def _on_rescan_button_pressed(self):
+        if self._scanner_state == self.ScannerState.RUNNING:
+            # Cancel scan
+            # self.modloader.running = False
+            self._scanner_state = self.ScannerState.CANCELLED
+            self.modloader.cancelScanSignal.emit()
+        else:
+            self.modlist_widget.clear_table()
+            client = Client()
+            # self.rescan_btn.setEnabled(False)
+            self.rescan_btn.setText('Cancel')
+            self._scanner_state = self.ScannerState.RUNNING
+            try:
+                self.server_modlist = client.get_server_mod_list()
 
-    def _refresh_list(self):
-        self.modlist_widget.clear_table()
-        client = Client()
-        try:
-            self.rescan_btn.setEnabled(False)
-            self.show()
-            self.server_modlist = client.get_server_mod_list()
-
-            self.thread = QThread()
-            self.modloader = ModLoader(self)
-            self.modloader.moveToThread(self.thread)
-            self.thread.started.connect(self.modloader.run)
-            self.modloader.finished.connect(self.thread.quit)
-            self.modloader.finished.connect(self.modloader.deleteLater)
-            self.modloader.finished.connect(self.thread.deleteLater)
-            self.modloader.finished.connect(self._on_modlist_load)
-            self.modloader.progress.connect(self.report_progress)
-            self.thread.start()
-        except error as e:
-            self.rescan_btn.setEnabled(True)
-            self.on_show_message_box('Unable to connect to server', 'Unable to connect to server at {}:{}\n{}'.format(client.conf.server_ip, client.conf.server_port, e), False)
+                self.thread = QThread()
+                self.modloader = ModLoader(self)
+                self.modloader.moveToThread(self.thread)
+                self.thread.started.connect(self.modloader.run)
+                self.modloader.onLocalDirScanned.connect(self.onLocalDirScanned)
+                self.modloader.onErrorSignal.connect(self.showMessageBox)
+                self.modloader.finished.connect(self.thread.quit)
+                self.modloader.finished.connect(self.thread.deleteLater)
+                self.modloader.finished.connect(self._on_modloader_finish)
+                self.modloader.progress.connect(self.report_progress)
+                self.thread.start()
+            except ConnectionRefusedError as e:
+                self.rescan_btn.setText('Re-Scan')
+                self.rescan_btn.setEnabled(True)
+                self.on_show_message_box('Unable to connect to server', 'Unable to connect to server at {}:{}\n{}'.format(client.conf.server_ip, client.conf.server_port, e), False)
 
     def report_progress(self, prog):
         self.upper_text.setText('Scanning... {}%'.format(prog))
-        pass
 
-    def _on_modlist_load(self):
-        self.upper_text.setText('Scanned!')
+    def _on_modloader_finish(self):
+        if self._scanner_state == self.ScannerState.RUNNING:
+            self._scanner_state = self.ScannerState.READY
+        else:
+            self.upper_text.setText('Scan cancelled')
+
+        self.rescan_btn.setText('Re-Scan')
+        self.modloader.deleteLater()
 
     def set_message(self, msg: str):
         self.message.setText(msg)
@@ -411,38 +443,61 @@ class ModDownloader(QObject):
 
 
 class ModLoader(QObject):
+    # Signal outputs
     finished = pyqtSignal()
+    onLocalDirScanned = pyqtSignal(dict)
     progress = pyqtSignal(int)
+    onErrorSignal = pyqtSignal(str, str, bool)
+
+    # Signal input
+    cancelScanSignal = pyqtSignal()
 
     def __init__(self, client_gui: ClientGUI):
         super().__init__()
         self.parent = client_gui
+        self.cancelScanSignal.connect(self._on_cancel_signal)
+        self.running = False
 
-        # self.widget = QWidget()
-        # self.widget.setWindowTitle('Scanning local dir...')
-        # layout = QVBoxLayout()
-        # self.text = QLabel('0%')
-        # layout.addWidget(self.text)
-        # self.widget.setLayout(layout)
-        # self.widget.show()
-        # self.finished.connect(self.widget.close)
+    def _on_cancel_signal(self):
+        print('Cancel sign')
+        self.running = False
 
     def run(self) -> None:
+        self.running = True
         client = Client()
         # self.text.setText('Pulling mod config from server...')
         try:
             server_mods = client.get_server_mod_list()
         except error as e:
-            self.parent.showMessageBox.emit('Failed to connect to server', 'Failed to connect to server at {}:{}\n {}'.format(
+            self.onErrorSignal.emit('Failed to connect to server', 'Failed to connect to server at {}:{}\n {}'.format(
                 client.conf.server_ip, client.conf.server_port, e), False)
             self.finished.emit()
             return
 
-        self._on_progress(0)
-        client_modlist = list_mods_in_dir(custom_progress_callback=self._on_progress)
-        self.parent.onLocalDirScanned.emit(client_modlist)
+        self.progress.emit(0)
+        print('Compiling list of mods...   0%', end='', flush=True)
+        to_ret = {}
+        files = [f for f in listdir('.') if f.endswith('.jar')]
+        nfiles = len(files)
+        for i in range(nfiles):
+            if not self.running:
+                break
+            f = files[i]
+            try:
+                m = ModInfo(f)
+                to_ret[m.id] = m
+            except KeyError as e:
+                print('[WN] {}: {}'.format(f, e))
+            except zipfile.BadZipFile as e:
+                print('[WN]: {}. Deleted.'.format(e))
+
+            prog = int(100 * (i + 1) / nfiles)
+            self.progress.emit(prog)
+
+        if self.running:
+            # No interrupt, scan complete
+
+            self.onLocalDirScanned.emit(to_ret)
+
         self.finished.emit()
 
-    def _on_progress(self, prog: int):
-        self.progress.emit(prog)
-        # self.text.setText('Scanning local mods... {}%'.format(prog))

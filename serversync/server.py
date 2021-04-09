@@ -63,7 +63,7 @@ class ServerSyncServer:
                 while True:
                     cli, addr = server_sock.accept()
                     print('[OK] Client connected: {}'.format(addr))
-                    msg = ''
+                    msg = b''
                     cli.settimeout(0.5)
                     try:
                         while True:
@@ -72,24 +72,25 @@ class ServerSyncServer:
                                 break
                             # If null-byte terminated, end of message
                             if buf.endswith(bytes(1)):
-                                msg += buf[:-1].decode()
+                                msg += buf[:-1]
                                 break
                             else:
-                                msg += buf.decode()
+                                msg += buf
                     except timeout:
                         pass
 
-                    if msg == 'ping':
+                    if msg == b'ping':
                         print('Handling ping request')
                         cli.send('pong'.encode())
                     else:
-                        if msg == 'list':
+                        if msg == b'list':
                             print('Handling list request')
                             cli.send(json.dumps({'required': {mid: modlist[mid].to_dict() for mid in modlist},
                                                  'optional': self.client_side_mod_ids,
                                                  'server-side': self.server_side_mod_ids}).encode())
 
-                        elif msg.startswith('get '):
+                        elif msg.startswith(b'get '):
+                            msg = msg.decode()
                             mod_id = msg.lstrip('get').strip()
                             print('Handling get request: {}'.format(mod_id))
                             if mod_id in modlist:
@@ -97,7 +98,8 @@ class ServerSyncServer:
                             elif mod_id in server_only_mods:
                                 cli.send(json.dumps(server_only_mods[mod_id].to_dict()).encode())
 
-                        elif msg.startswith('download '):
+                        elif msg.startswith(b'download '):
+                            msg = msg.decode()
                             mod_id = msg.lstrip('download').strip()
                             print('Handling download request: {}'.format(mod_id))
                             print('  Received download request for mod with id: {}'.format(mod_id))
@@ -118,52 +120,83 @@ class ServerSyncServer:
                                 print('[ER] Mod with id {} not in modlist?!'.format(mod_id))
                         else:
                             try:
-                                data = json.loads(msg)
-                                if 'type' in data:
-                                    if data['type'] == 'set_profile':
+                                msg = Message.decode(msg)
+                                if msg.type == PingMessage.TYPE_STR:
+                                    cli.send(PingMessage().encode())
+                                elif msg.type == ListRequest.TYPE_STR:
+                                    cli.send(ListResponse({mid: modlist[mid].to_dict() for mid in modlist},
+                                                          self.client_side_mod_ids,
+                                                          self.server_side_mod_ids).encode())
+                                elif msg.type == GetRequest.TYPE_STR:
+                                    mod_id = msg[GetRequest.KEY_ID]
+                                    if mod_id in modlist:
+                                        cli.send(GetResponse(modlist[mod_id]).encode())
+                                    elif mod_id in server_only_mods:
+                                        cli.send(GetResponse(server_only_mods[mod_id]).encode())
+                                    else:
+                                        cli.send(ErrorMessage(GetRequest.ERROR_NOT_FOUND).encode())
+                                elif msg.type == DownloadRequest.TYPE_STR:
+                                    mod_id = msg[DownloadRequest.KEY_ID]
+                                    print('Handling download request: {}'.format(mod_id))
+                                    print('  Received download request for mod with id: {}'.format(mod_id))
+                                    if mod_id in modlist:
+                                        mod = modlist[mod_id]
+                                        print('  Uploading {}...   0%'.format(mod.filepath), end='')
+                                        with open(mod.filepath, 'rb') as ifile:
+                                            total_sent = 0
+                                            to_send = path.getsize(mod.filepath)
+                                            while True:
+                                                buf = ifile.read(DOWNLOAD_BUFFER_SIZE)
+                                                if len(buf) == 0:
+                                                    break
+                                                cli.send(buf)
+                                                total_sent += len(buf)
+                                                print_progress(total_sent, to_send)
+                                    else:
+                                        print('[ER] Mod with id {} not in modlist?!'.format(mod_id))
+                                elif msg.type == SetProfileRequest.TYPE_STR:
+                                    if self.passkey is not None:
+                                        cli_passkey = msg[SetProfileRequest.KEY_PASSKEY]
+                                        if cli_passkey is None:
+                                            print('[WN] Client profile set failed due to missing passkey')
+                                            cli.send(ErrorMessage(SetProfileRequest.ERROR_CODE_MISSING_PASSKEY, 'Passkey is missing from request').encode())
+                                            raise ValueError('Missing passkey')
+                                        if cli_passkey != self.passkey:
+                                            print('[WN] Client profile set failed due to invalid passkey: "{}"'.format(cli_passkey))
+                                            cli.send(ErrorMessage(SetProfileRequest.ERROR_CODE_INVALID_PASSKEY, 'Invalid passkey').encode())
+                                            raise ValueError('Invalid passkey: {}'.format(cli_passkey))
 
-                                        if self.passkey is not None:
-                                            if 'passkey' not in data:
-                                                print('[WN] Client profile set failed due to missing passkey')
-                                                cli.send(json.dumps({'type': 'error',
-                                                                     'code': 1,
-                                                                     'message': 'Passkey missing'}).encode())
-                                                raise ValueError('Missing passkey')
-                                            if data['passkey'] != self.passkey:
-                                                print('[WN] Client profile set failed due to invalid passkey: "{}"'.format(data['passkey']))
-                                                cli.send(json.dumps({'type': 'error',
-                                                                     'code': 2,
-                                                                     'message': 'Passkey mismatch'}).encode())
-                                                raise ValueError('Invalid passkey: {}'.format(data['passkey']))
+                                    print('Handling set_profile request')
+                                    client_mods = msg[SetProfileRequest.KEY_CLIENT_MODS]
+                                    client_only_mod_ids = []
+                                    server_only_mod_ids = []
 
-                                        print('Handling set_profile request')
-                                        if 'mods' in data:
-                                            client_mods = data['mods']
-                                            client_only_mod_ids = self.client_side_mod_ids
-                                            server_only_mod_ids = self.server_side_mod_ids
+                                    # Re-combine server-only mods with modlist
+                                    modlist.update(server_only_mods)
 
-                                            for mid in client_mods:
-                                                if mid not in modlist:
-                                                    if mid not in client_only_mod_ids:
-                                                        client_only_mod_ids.append(mid)
+                                    for mid in client_mods:
+                                        if mid not in modlist:
+                                            if mid not in client_only_mod_ids:
+                                                client_only_mod_ids.append(mid)
 
-                                            for mid in modlist:
-                                                if mid not in client_mods:
-                                                    if mid not in server_only_mod_ids:
-                                                        server_only_mod_ids.append(mid)
+                                    for mid in modlist:
+                                        if mid not in client_mods:
+                                            if mid not in server_only_mod_ids:
+                                                server_only_mod_ids.append(mid)
 
-                                            self.conf[CONF_KEY_KNOWN_CLIENT_SIDE_MODS] = client_only_mod_ids
-                                            self.conf[CONF_KEY_KNOWN_SERVER_SIDE_MODS] = server_only_mod_ids
+                                    self.conf[CONF_KEY_KNOWN_CLIENT_SIDE_MODS] = client_only_mod_ids
+                                    self.conf[CONF_KEY_KNOWN_SERVER_SIDE_MODS] = server_only_mod_ids
 
-                                            self.conf.save()
+                                    self.conf.save()
 
-                                            cli.send(json.dumps({'type': 'success'}).encode())
+                                    cli.send(SuccessMessage().encode())
 
-                                            print('[OK] Client profile updated')
-                                            modlist = list_mods_in_dir()
-                                            modlist, server_only_mods = self.filter_non_sided_mods(modlist)
-                                            print('[OK] Filtered down to {} shared mods'.format(len(modlist.keys())))
-
+                                    print('[OK] Client profile updated')
+                                    modlist = list_mods_in_dir()
+                                    modlist, server_only_mods = self.filter_non_sided_mods(modlist)
+                                    print('[OK] Filtered down to {} shared mods'.format(len(modlist.keys())))
+                                else:
+                                    cli.send(ErrorMessage(ErrorMessage.ERROR_CODE_UNRECOGNISED_REQUEST, 'Unknown request type: {}'.format(msg.type)).encode())
                             except ValueError:
                                 pass
 
@@ -171,7 +204,9 @@ class ServerSyncServer:
                     print('[OK] Disconnected client.')
             except OSError as e:
                 print(e, file=sys.stderr)
-                break
+                # Filter out exception when client forcibly closes connection
+                if e.errno != 10054:
+                    break
             except KeyboardInterrupt:
                 print('[OK] Closing server')
                 server_sock.close()

@@ -201,46 +201,56 @@ if __name__ == '__main__':
         profile = {mid: modlist[mid].to_dict() for mid in modlist}
         cli = Client()
         print('Connecting & Uploading to server... ', end='')
-        to_send = {'type': 'set_profile', 'mods': profile}
-        if pargs.passkey is not None:
-            to_send['passkey'] = pargs.passkey
 
-        ret = cli.send(json.dumps(to_send).encode())
-        if ret is not None:
-            if ret['type'] == 'error':
-                if 'code' in ret and ret['code'] == 1:
-                    passkey = input('Enter passkey: ')
-                    to_send['passkey'] = passkey
-                    ret = cli.send(json.dumps(to_send).encode())
-                    if ret is not None:
-                        if ret['type'] == 'error':
-                            print('[ER] Error when uploading to server: {}'.format(ret['message']), file=sys.stderr)
-                            exit(ret['code'] if 'code' in ret else -1)
-                        elif ret['type'] != 'success':
-                            print('[WN] Unhandled response: {}'.format(ret))
-                else:
-                    print('[ER]')
-                    print(ret['message'])
-                    exit(-1)
-            elif ret['type'] != 'success':
-                print('[WN] Unhandled response: {}'.format(ret))
+        to_send = SetProfileRequest(profile, passkey=pargs.passkey)
+        ret = cli.send(to_send)
+
+        if ret.type == ErrorMessage.TYPE_STR:
+            if ret[ErrorMessage.KEY_CODE] == SetProfileRequest.ERROR_CODE_MISSING_PASSKEY:
+                passkey = input('Enter passkey (required): ')
+                if len(passkey) == 0:
+                    exit(0)
+                to_send[SetProfileRequest.KEY_PASSKEY] = passkey
+                ret = cli.send(to_send)
+                if ret.type == ErrorMessage.TYPE_STR:
+                    print('[ER] Error when uploading to server: (Code {}) {}'.format(ret[ErrorMessage.KEY_CODE], ret[ErrorMessage.KEY_MESSAGE]), file=sys.stderr)
+                    exit(ret[ErrorMessage.KEY_CODE])
+                elif ret['type'] != 'success':
+                    print('[WN] Unhandled response: {}'.format(ret))
+            else:
+                print('[ER]')
+                print(ret['message'])
+                exit(-1)
+        elif ret['type'] != 'success':
+            print('[WN] Unhandled response: {}'.format(ret))
         print('[OK]', flush=True)
 
-        server_modlist = cli.get_server_mod_list()
-        optional = server_modlist['optional']
-        server_side = server_modlist['server-side']
+        response = cli.get_server_mod_list()
+        if response.type == ErrorMessage.type:
+            print('[ER] Unable to retrieve modlist', file=sys.stderr)
+            exit_after_1()
+        elif response.type != ListResponse.TYPE_STR:
+            print('[ER] Unexpected response: {}'.format(response), file=sys.stderr)
+            exit_after_1()
+        else:
+            server_modlist = response[ListResponse.KEY_REQUIRED_MODS]
+            optional = response[ListResponse.KEY_CLIENT_SIDE_MODS]
+            server_side = response[ListResponse.KEY_SERVER_SIDE_MODS]
 
-        print('Required mods:')
-        for mid in server_modlist['required']:
-            print('  - {}'.format(cli.get_mod_info(mid)['name']))
+            print('Required mods:')
+            for mid in server_modlist:
+                print('  - {}'.format(server_modlist[mid]['name']))
 
-        print('Client-side mods:')
-        for mid in optional:
-            print('  - {}'.format(modlist[mid].name))
+            print('Client-side mods:')
+            for mid in optional:
+                if mid in modlist:
+                    print('  - {}'.format(modlist[mid].name))
+                else:
+                    print('  - {} (missing)'.format(mid))
 
-        print('Server-side mods:')
-        for mid in server_side:
-            print('  - {}'.format(cli.get_mod_info(mid)['name']))
+            print('Server-side mods:')
+            for mid in server_side:
+                print('  - {}'.format(cli.get_mod_info(mid)['name']))
 
 
 

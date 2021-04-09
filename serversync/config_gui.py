@@ -111,7 +111,7 @@ class SettingsWidget(QWidget):
         self.setLayout(grid)
         self.setWindowTitle('ServerSync Settings')
 
-        self.ip_option = self.Option(grid, 'Server IP', 'marcobolt.com', 0)
+        self.ip_option = self.Option(grid, 'Server IP', 'localhost', 0)
         self.port_option = self.Option(grid, 'Server Port', str(DEFAULT_SERVER_PORT), 1)
 
         reset_btn = QPushButton()

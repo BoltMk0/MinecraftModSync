@@ -25,6 +25,13 @@
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Python Script" />
+      </list>
+    </option>
+  </component>
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
@@ -35,12 +42,177 @@
   </component>
   <component name="PropertiesComponent">
     <property name="RunOnceActivity.OpenProjectViewOnStart" value="true" />
-    <property name="last_opened_file_path" value="$PROJECT_DIR$" />
+    <property name="last_opened_file_path" value="$PROJECT_DIR$/test/mods1" />
   </component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
       <recent name="H:\Software Projects\mc_serversync" />
     </key>
+  </component>
+  <component name="RunManager" selected="Python.client">
+    <configuration name="client" type="PythonConfigurationType" factoryName="Python" temporary="true">
+      <module name="mc_serversync" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/test/client" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/serversync/__main__.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration name="install_serversync" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="mc_serversync" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/install_serversync.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration name="server set passkey" type="PythonConfigurationType" factoryName="Python">
+      <module name="mc_serversync" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/../ServerSync/test/mods1" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/serversync/__main__.py" />
+      <option name="PARAMETERS" value="--server --passkey hello" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration name="server" type="PythonConfigurationType" factoryName="Python">
+      <module name="mc_serversync" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/test/mods1" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/serversync/__main__.py" />
+      <option name="PARAMETERS" value="--server" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration name="setProfile with passkey" type="PythonConfigurationType" factoryName="Python">
+      <module name="mc_serversync" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/../ServerSync/test/client" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/serversync/__main__.py" />
+      <option name="PARAMETERS" value="--setProfile --passkey hello" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration name="setProfile" type="PythonConfigurationType" factoryName="Python">
+      <module name="mc_serversync" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/../ServerSync/test/client" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/serversync/__main__.py" />
+      <option name="PARAMETERS" value="--setProfile" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration name="setup" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="mc_serversync" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/setup.py" />
+      <option name="PARAMETERS" value="bdist_wheel" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <list>
+      <item itemvalue="Python.server set passkey" />
+      <item itemvalue="Python.server" />
+      <item itemvalue="Python.setProfile with passkey" />
+      <item itemvalue="Python.setProfile" />
+      <item itemvalue="Python.client" />
+      <item itemvalue="Python.install_serversync" />
+      <item itemvalue="Python.setup" />
+    </list>
+    <recent_temporary>
+      <list>
+        <item itemvalue="Python.client" />
+        <item itemvalue="Python.setup" />
+        <item itemvalue="Python.install_serversync" />
+      </list>
+    </recent_temporary>
   </component>
   <component name="SpellCheckerSettings" RuntimeDictionaries="0" Folders="0" CustomDictionaries="0" DefaultDictionary="application-level" UseSingleDictionary="true" transferred="true" />
   <component name="TaskManager">
@@ -63,5 +235,59 @@
         </entry>
       </map>
     </option>
+    <option name="oldMeFiltersMigrated" value="true" />
+  </component>
+  <component name="WindowStateProjectService">
+    <state x="479" y="211" key="#com.intellij.execution.impl.EditConfigurationsDialog" timestamp="1617911204610">
+      <screen x="0" y="0" width="2048" height="1112" />
+    </state>
+    <state x="479" y="211" key="#com.intellij.execution.impl.EditConfigurationsDialog/0.0.2048.1112/2560.-138.1080.1920@0.0.2048.1112" timestamp="1617911204610" />
+    <state x="804" y="311" key="FileChooserDialogImpl" timestamp="1617911047712">
+      <screen x="0" y="0" width="2048" height="1112" />
+    </state>
+    <state x="804" y="311" key="FileChooserDialogImpl/0.0.2048.1112/2560.-138.1080.1920@0.0.2048.1112" timestamp="1617911047712" />
+    <state width="2049" height="385" key="GridCell.Tab.0.bottom" timestamp="1617987637895">
+      <screen x="0" y="0" width="2048" height="1112" />
+    </state>
+    <state width="2049" height="385" key="GridCell.Tab.0.bottom/0.0.2048.1112/2560.-138.1080.1920@0.0.2048.1112" timestamp="1617987637895" />
+    <state width="2049" height="385" key="GridCell.Tab.0.center" timestamp="1617987637895">
+      <screen x="0" y="0" width="2048" height="1112" />
+    </state>
+    <state width="2049" height="385" key="GridCell.Tab.0.center/0.0.2048.1112/2560.-138.1080.1920@0.0.2048.1112" timestamp="1617987637895" />
+    <state width="2049" height="385" key="GridCell.Tab.0.left" timestamp="1617987637895">
+      <screen x="0" y="0" width="2048" height="1112" />
+    </state>
+    <state width="2049" height="385" key="GridCell.Tab.0.left/0.0.2048.1112/2560.-138.1080.1920@0.0.2048.1112" timestamp="1617987637895" />
+    <state width="2049" height="385" key="GridCell.Tab.0.right" timestamp="1617987637895">
+      <screen x="0" y="0" width="2048" height="1112" />
+    </state>
+    <state width="2049" height="385" key="GridCell.Tab.0.right/0.0.2048.1112/2560.-138.1080.1920@0.0.2048.1112" timestamp="1617987637895" />
+    <state width="2049" height="385" key="GridCell.Tab.1.bottom" timestamp="1617987637895">
+      <screen x="0" y="0" width="2048" height="1112" />
+    </state>
+    <state width="2049" height="385" key="GridCell.Tab.1.bottom/0.0.2048.1112/2560.-138.1080.1920@0.0.2048.1112" timestamp="1617987637895" />
+    <state width="2049" height="385" key="GridCell.Tab.1.center" timestamp="1617987637895">
+      <screen x="0" y="0" width="2048" height="1112" />
+    </state>
+    <state width="2049" height="385" key="GridCell.Tab.1.center/0.0.2048.1112/2560.-138.1080.1920@0.0.2048.1112" timestamp="1617987637895" />
+    <state width="2049" height="385" key="GridCell.Tab.1.left" timestamp="1617987637895">
+      <screen x="0" y="0" width="2048" height="1112" />
+    </state>
+    <state width="2049" height="385" key="GridCell.Tab.1.left/0.0.2048.1112/2560.-138.1080.1920@0.0.2048.1112" timestamp="1617987637895" />
+    <state width="2049" height="385" key="GridCell.Tab.1.right" timestamp="1617987637895">
+      <screen x="0" y="0" width="2048" height="1112" />
+    </state>
+    <state width="2049" height="385" key="GridCell.Tab.1.right/0.0.2048.1112/2560.-138.1080.1920@0.0.2048.1112" timestamp="1617987637895" />
+  </component>
+  <component name="XDebuggerManager">
+    <breakpoint-manager>
+      <default-breakpoints>
+        <breakpoint type="python-exception">
+          <properties notifyOnTerminate="true" exception="BaseException">
+            <option name="notifyOnTerminate" value="true" />
+          </properties>
+        </breakpoint>
+      </default-breakpoints>
+    </breakpoint-manager>
   </component>
 </project>
