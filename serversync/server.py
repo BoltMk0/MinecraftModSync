@@ -109,13 +109,16 @@ class ServerSyncServer:
                                 with open(mod.filepath, 'rb') as ifile:
                                     total_sent = 0
                                     to_send = path.getsize(mod.filepath)
-                                    while True:
-                                        buf = ifile.read(DOWNLOAD_BUFFER_SIZE)
-                                        if len(buf) == 0:
-                                            break
-                                        cli.send(buf)
-                                        total_sent += len(buf)
-                                        print_progress(total_sent, to_send)
+                                    try:
+                                        while True:
+                                            buf = ifile.read(DOWNLOAD_BUFFER_SIZE)
+                                            if len(buf) == 0:
+                                                break
+                                            cli.send(buf)
+                                            total_sent += len(buf)
+                                            print_progress(total_sent, to_send)
+                                    except timeout:
+                                        print(' [ER] Timed out')
                             else:
                                 print('[ER] Mod with id {} not in modlist?!'.format(mod_id))
                         else:
@@ -145,13 +148,16 @@ class ServerSyncServer:
                                         with open(mod.filepath, 'rb') as ifile:
                                             total_sent = 0
                                             to_send = path.getsize(mod.filepath)
-                                            while True:
-                                                buf = ifile.read(DOWNLOAD_BUFFER_SIZE)
-                                                if len(buf) == 0:
-                                                    break
-                                                cli.send(buf)
-                                                total_sent += len(buf)
-                                                print_progress(total_sent, to_send)
+                                            try:
+                                                while True:
+                                                    buf = ifile.read(DOWNLOAD_BUFFER_SIZE)
+                                                    if len(buf) == 0:
+                                                        break
+                                                    cli.send(buf)
+                                                    total_sent += len(buf)
+                                                    print_progress(total_sent, to_send)
+                                            except timeout:
+                                                print('[ER] Timed out')
                                     else:
                                         print('[ER] Mod with id {} not in modlist?!'.format(mod_id))
                                 elif msg.type == SetProfileRequest.TYPE_STR:
