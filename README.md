@@ -24,13 +24,13 @@ the installer adds Python to the system environment variables!
 
 - [Download the latest release of ServerSync][release]
 - **Install ServerSync using pip**
-    - Open a command prompt window (right click Start menu and select "Command Prompt")
+    - Open a command prompt window (Search for "Command Prompt" in start menu)
     - Type "python -m pip install " then drag and drop the .whl file into the cmd window.
     The command should look something like:
     
         `python -m pip install "C:\Users\<user>\Downloads\serversync-0.3-py3-none-any.whl"`
 - **Install commands to the context (right click) menu**
-    - Open a Command Prompt window **as administrator** (right click Start menu and select "Command Prompt (Admin)")
+    - Open a Command Prompt window **as administrator** (Search for "Command Prompt" in start menu, right click and select "Run as Administrator")
     - Run `python -m serversync --install`, and enter "1" when prompted.
 
     Done! Now you have access to serversync from any folder by right-clicking and selecting "Run ServerSync". 
