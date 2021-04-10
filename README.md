@@ -64,16 +64,13 @@ To quickly sync your mods with a server, right-click anywhere in your minecraft 
 select the newly-added "Run ServerSync" from the context menu. If you can't see this,
 repeat the steps in Installation Instructions (Client/User).
 
-The client app will show, and automatically start scanning if it can connect to the server.
-If it can't see the server, an error message will pop up. Close this, and click the "Settings"
-button. Make sure the ip address and port is correct, hit save, and try again.
+If there is not serversync configuration file (serversync.conf) in the mods folder, a new
+one will be created and it will ask you to enter the server details. Next time out run serversync,
+it will automatically run using the defined configuration.
 
 ![ServerSync Settings GUI](https://github.com/BoltMk0/mc_serversync/raw/main/screenshots/serversync_config_gui.png)
-
-
 
 After the scan completes, a summary of mods that need to be added, deleted and updated will be shown.
 Read through the mods to be deleted (at the top of the list) carefully, some of these could
 be client-side mods that you want to keep. If you do want to keep then, uncheck the checkbox.
-This will be stored, so at the next sync you won't have to check again.
-
+Unchecked items will be stored in the config, so at the next sync you won't have to check again.
