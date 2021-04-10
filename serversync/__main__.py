@@ -19,6 +19,8 @@ if __name__ == '__main__':
                     default='DEFAULT')
     ap.add_argument('--install', action='store_const', const='INSTALL', dest='mode',
                     help='Install commands to context menu')
+    ap.add_argument('--uninstall', action='store_const', const='UNINSTALL', dest='mode',
+                    help='Uninstall commands from context menu')
     ap.add_argument('--noGui', action='store_const', const='CLI', dest='mode',
                     help='Run client without gui')
     ap.add_argument('--configGui', action='store_const', const='CONFIG_GUI', dest='mode',
@@ -156,7 +158,7 @@ if __name__ == '__main__':
         server = ServerSyncServer(pargs.port, pargs.passkey)
         server.run()
 
-    elif pargs.mode == 'INSTALL':
+    elif pargs.mode in ['INSTALL', 'UNINSTALL']:
         from serversync.config_gui import *
         import winreg
         if sys.platform != 'win32':
@@ -171,16 +173,11 @@ if __name__ == '__main__':
             # winreg.QueryValue(key, '')
             return False
 
-        sel = input('Please select an option: \n'
-                    '  1  Add ServerSync to context menu\n'
-                    '  2  Remove ServerSync from context menu\n'
-                    'Selection: ')
-
-        if sel == '1':
+        if pargs.mode == 'INSTALL':
             print('Installing...')
             install_context_menu()
             print('DONE')
-        elif sel == '2':
+        else:
             print('Uninstalling...')
             print('  Removing command subkey... ', end='')
             winreg.DeleteKey(key2, '')
@@ -189,9 +186,6 @@ if __name__ == '__main__':
             winreg.DeleteKey(key, '')
             print('[OK]')
 
-        else:
-            print('Unrecognised selection: "{}". Exiting.'.format(sel))
-            exit(0)
     elif pargs.mode == 'CONFIG_GUI':
         from serversync.config_gui import config_editor_session
         config_editor_session()
