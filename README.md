@@ -1,24 +1,27 @@
 # ServerSync
-Synchronize Minecraft mods between a server and client with minimum effort
+Synchronize Minecraft mods between a server and client with minimum effort.
+Currently only supports Forge mods.
+
 
 ![ServerSync Client GUI](https://github.com/BoltMk0/mc_serversync/raw/main/screenshots/serversync_gui.png)
 
 [Download Files][release]
 
+[Download Windows Installer][installer]
+
 [release]: https://github.com/BoltMk0/mc_serversync/releases/latest
+[installer]: https://github.com/BoltMk0/mc_serversync/releases/download/v1.2/serversync_1_2_installer.exe
 
 ## Getting Started
-#### Pre-requesites:
-- [Python 3.8](https://www.python.org/downloads/) (Will not work with 3.9)
+*UPDATE: ServerSync now has a windows installer to MASSIVELY simplify the installation process! Download [Here][installer].*
 
-    To check python version, open up a command prompt and run `python --version`
 
-    IMPORTANT! When installing python, make sure "Add Python to 
-environment variables" is checked.
+#### Manual Installation Instructions (Client/User)
 
-    Quick link: [Download Python 3.8.9](https://www.python.org/ftp/python/3.8.9/python-3.8.9-amd64.exe)
+NOTE: ServerSync requires python 3.8.x (Does not work on 3.9.x yet). If you don't already have it,
+[Download Python 3.8.9](https://www.python.org/ftp/python/3.8.9/python-3.8.9-amd64.exe) and be sure
+the installer adds Python to the system environment variables!
 
-#### Installation Instructions (Client/User)
 - [Download the latest release of ServerSync][release]
 - **Install ServerSync using pip**
     - Open a command prompt window (right click Start menu and select "Command Prompt")
