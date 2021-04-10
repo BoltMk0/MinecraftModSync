@@ -144,7 +144,7 @@ class ClientConfig(dict):
 
     def save(self):
         with open(self.filepath, 'w') as file:
-            file.write(json.dumps(self))
+            file.write(json.dumps(self, indent=2))
 
     def reload(self):
         self.clear()
