@@ -10,11 +10,13 @@ Currently only supports Forge mods.
 [Download Windows Installer][installer]
 
 [release]: https://github.com/BoltMk0/mc_serversync/releases/latest
+
 [installer]: https://github.com/BoltMk0/mc_serversync/releases/download/v1.2/serversync_1_2_installer.exe
 
-## Getting Started
-*UPDATE: ServerSync now has a windows installer to MASSIVELY simplify the installation process! Download [Here][installer].*
+| :warning: The installer (built with NSIS) has been known to appear as a rootkit virus in some antivirus software. If you have concerns/are uncomfortable letting it through, install using the manual installation instructions in the readme. I have uploaded the NSIS installer script to the repository so you can see what it does. |
+|---|
 
+## Getting Started
 
 #### Manual Installation Instructions (Client/User)
 
