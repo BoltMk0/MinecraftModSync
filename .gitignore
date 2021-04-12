@@ -3,6 +3,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# NSIS
+*.exe
+
+
 # C extensions
 *.so
 
