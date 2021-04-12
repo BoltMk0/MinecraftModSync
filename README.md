@@ -13,7 +13,7 @@ Currently only supports Forge mods.
 
 [installer]: https://github.com/BoltMk0/mc_serversync/releases/download/v1.2/serversync_1_2_installer.exe
 
-| :warning: The installer (built with NSIS) has been known to appear as a rootkit virus in some antivirus software. If you have concerns/are uncomfortable letting it through, install using the manual installation instructions in the readme. I have uploaded the NSIS installer script to the repository so you can see what it does. |
+| :warning: The installer (built with NSIS) has been known to appear as a rootkit virus in some antivirus software. If you have concerns/are uncomfortable letting it through, install using the manual installation instructions below. I have uploaded the NSIS installer script to the repository so you can see what it does. |
 |---|
 
 ## Getting Started
