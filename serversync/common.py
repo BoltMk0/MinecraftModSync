@@ -397,12 +397,17 @@ class PingMessage(Message):
         super().__init__()
         self[self.KEY_VERSION] = VERSION
 
+
 class DownloadRequest(GetRequest):
     TYPE_STR = 'download'
 
 
 class ServerRefreshRequest(Message):
     TYPE_STR = 'refresh'
+
+
+class ServerStopRequest(Message):
+    TYPE_STR = 'stop'
 
 
 messageTypeToConstructor = {ErrorMessage.TYPE_STR: ErrorMessage,

@@ -75,14 +75,18 @@ class ServerSyncServer:
             ListRequest.TYPE_STR: self._handle_list,
             DownloadRequest.TYPE_STR: self._handle_download,
             SetProfileRequest.TYPE_STR: self._handle_set_profile,
-            ServerRefreshRequest.TYPE_STR: self._handle_refresh_request
+            ServerRefreshRequest.TYPE_STR: self._handle_refresh_request,
+            ServerStopRequest.TYPE_STR: self._handle_stop_request
         }
 
         self.modlist = {}
+        self.client_side_modlist = {}
         self.modlist_lock = Lock()
 
         self._modlist_updater_thread = None
 
+        self.server_sock = None
+        self.running = False
         self._input_sockets = []
         self._output_sockets = []
 
@@ -248,6 +252,13 @@ class ServerSyncServer:
         self.launch_modlist_update_thread()
         client.send(SuccessMessage().encode())
 
+    def _handle_stop_request(self, client: ClientHandler, msg: Message):
+        if client.addr[0] == '127.0.0.1':
+            self.server_sock.close()
+            self.running = False
+            # Directly send success message before closing
+            client.sock.send(SuccessMessage().encode())
+
     def _handle_unknown(self, client: ClientHandler, msg: Message):
         print('[ER] Unknown message type: {}'.format(msg.type))
         client.send(ErrorMessage(ErrorMessage.ERROR_CODE_UNRECOGNISED_REQUEST, 'Unknown request type: {}'.format(msg.type)).encode())
@@ -285,9 +296,11 @@ class ServerSyncServer:
             self._output_sockets.remove(sock)
 
     def run(self):
-        server_sock = socket(AF_INET, SOCK_STREAM)
-        server_sock.setblocking(False)
-        self._input_sockets.append(server_sock)
+        self.running = True
+
+        self.server_sock = socket(AF_INET, SOCK_STREAM)
+        self.server_sock.setblocking(False)
+        self._input_sockets.append(self.server_sock)
 
         # Refresh modlist first
         print('[OK] Scanning local dir for mods...   0%', end='')
@@ -302,17 +315,17 @@ class ServerSyncServer:
 
         print('Starting server on port {}... '.format(self.conf.server_port), end='')
         try:
-            server_sock.bind(('', self.conf.server_port))
+            self.server_sock.bind(('', self.conf.server_port))
             print('[OK]')
 
-            server_sock.listen(5)
-            server_sock.settimeout(60)
+            self.server_sock.listen(5)
+            self.server_sock.settimeout(60)
             buf = bytearray(DOWNLOAD_BUFFER_SIZE)
-            while True:
+            while self.running:
                 readable, writeable, exceptional = select.select(self._input_sockets, self._output_sockets, self._input_sockets)
                 for sock in readable:
-                    if sock is server_sock:
-                        connection, addr = server_sock.accept()
+                    if sock is self.server_sock:
+                        connection, addr = self.server_sock.accept()
                         connection.setblocking(False)
                         print('[OK] Client connected: {}'.format(addr))
                         handler = self.ClientHandler(connection, addr)
@@ -357,15 +370,18 @@ class ServerSyncServer:
                                 self._close_client(client.sock)
 
                 for sock in exceptional:
-                    self._close_client(sock)
+                    if sock != self.server_sock:
+                        self._close_client(sock)
+                    else:
+                        self.running = False
         except:
             raise
         finally:
             print('Stopping server...')
             for sock in self._input_sockets:
-                if sock != server_sock:
+                if sock != self.server_sock:
                     self._close_client(sock)
-            server_sock.close()
+            self.server_sock.close()
             print('[OK] Server stopped')
 
     @staticmethod

@@ -17,10 +17,12 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser('serversync | Version {}'.format(VERSION))
     ap.add_argument('--server', action='store_const', const='SERVER', dest='mode', help='Server mode. If server instance is already running, this will trigger a modlist update.',
                     default='DEFAULT')
+    ap.add_argument('--server-stop', action='store_const', const='STOP_SERVER', dest='mode',
+                    help='Stop server instance')
     ap.add_argument('--install', action='store_const', const='INSTALL', dest='mode',
-                    help='Install commands to context menu')
+                    help='Install commands to context menu (windows only)')
     ap.add_argument('--uninstall', action='store_const', const='UNINSTALL', dest='mode',
-                    help='Uninstall commands from context menu')
+                    help='Uninstall commands from context menu (windows only)')
     ap.add_argument('--noGui', action='store_const', const='CLI', dest='mode',
                     help='Run client without gui')
     ap.add_argument('--configGui', action='store_const', const='CONFIG_GUI', dest='mode',
@@ -172,6 +174,29 @@ if __name__ == '__main__':
             server = ServerSyncServer(pargs.port, pargs.passkey)
             server.launch_modlist_update_thread()
             server.run()
+    elif pargs.mode == 'STOP_SERVER':
+        cli = Client()
+        print('Connecting to local server... ', end='')
+        try:
+            cli.connect('127.0.0.1')
+            print('[OK]')
+            print('Issuing stop request... ', end='')
+            ret = cli.send(ServerStopRequest())
+            if ret.type == SuccessMessage.TYPE_STR:
+                print('[OK]')
+            elif ret.type == ErrorMessage.TYPE_STR:
+                print('[ER]')
+                print('(Error code {}): {}'.format(ret[ErrorMessage.KEY_CODE], ret[ErrorMessage.KEY_MESSAGE]), file=sys.stderr)
+                exit(ret[ErrorMessage.KEY_CODE])
+            else:
+                print('[ER]')
+                print('Unexpected response: {}'.format(ret), file=sys.stderr)
+                exit(-1)
+
+        except timeout:
+            print('[ER]')
+            print('Connection timed out. Is the server running? Are you trying to stop it '
+                  'from another machine (naughty!)?', file=sys.stderr)
 
     elif pargs.mode in ['INSTALL', 'UNINSTALL']:
         from serversync.config_gui import *
@@ -232,7 +257,25 @@ if __name__ == '__main__':
                 print('[ER]')
                 print(ret['message'])
                 exit(-1)
-        elif ret['type'] != 'success':
+        elif ret['type'] == SuccessMessage.TYPE_STR:
+            print('[OK]')
+        elif ret['type'] == DownloadRequest.TYPE_STR:
+            # Server wants to download copies of client side mods first.
+            while True:
+                if ret['type'] == DownloadRequest.TYPE_STR:
+                    mod_id = ret[DownloadRequest.KEY_ID]
+                    mod = modlist[mod_id]
+                    print('Uploading {}... '.format(mod.name), end='')
+                    with open(mod.filepath, 'rb') as file:
+                        data = file.read()
+                    ret = Message.decode(cli.send_raw(data))
+                    print('[OK] Sent')
+                elif ret['type'] == SuccessMessage.TYPE_STR:
+                    break
+                else:
+                    raise UnexpectedResponseError(str(ret))
+
+        else:
             print('[WN] Unhandled response: {}'.format(ret))
         print('[OK]', flush=True)
 
