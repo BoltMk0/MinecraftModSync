@@ -238,27 +238,12 @@ class ServerSyncServer:
     def _handle_download(self, client: ClientHandler, msg: Message):
         mod_id = msg[DownloadRequest.KEY_ID]
         print('Handling download request: {}'.format(mod_id))
-        print('  Received download request for mod with id: {}'.format(mod_id))
         try:
             mod = self.modcache[mod_id]
-            if client.single_message_mode():
-                # Using legacy download mechanism. Load mod into output buffer for sending.
-                with open(mod.filepath, 'rb') as file:
-                    client.output_buffer = file.read()
-                print('[OK] Uploading {} ({} bytes loaded into output buffer)'.format(mod.name, len(client.output_buffer)))
-            # with open(mod.filepath, 'rb') as ifile:
-            #     total_sent = 0
-            #     to_send = path.getsize(mod.filepath)
-            #     try:
-            #         while True:
-            #             buf = ifile.read(DOWNLOAD_BUFFER_SIZE)
-            #             if len(buf) == 0:
-            #                 break
-            #             client.send(buf)
-            #             total_sent += len(buf)
-            #             print_progress(int(100*total_sent/to_send))
-            #     except timeout:
-            #         print('[ER] Timed out')
+            with open(mod.filepath, 'rb') as file:
+                client.output_buffer = file.read()
+            print('[OK] Uploading {} ({} bytes loaded into output buffer)'.format(mod.name, len(client.output_buffer)))
+
         except KeyError:
             print('[ER] Mod with id {} not in modlist'.format(mod_id))
             if client.single_message_mode():
