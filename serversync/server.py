@@ -1,9 +1,57 @@
 from serversync.client import *
 from time import sleep
 from socket import timeout
+import select
+from threading import Thread, Lock, ThreadError
+
+
+class NoModsFoundError(Exception):
+    pass
 
 
 class ServerSyncServer:
+    class ClientHandler:
+        def __init__(self, cli: socket, addr):
+            self.sock = cli
+            self.addr = addr
+            self.version_major = -1
+            self.version_minor = -1
+            self.input_buffer = bytes()
+            self.output_buffer = bytes()
+
+        def single_message_mode(self):
+            # Client 1.3+ operates multi-message mode
+            return self.version_major < 1 or (self.version_major == 1 and self.version_minor < 3)
+
+        def set_version_from_ping(self, msg: Message):
+            if PingMessage.KEY_VERSION in msg:
+                self.version_major, self.version_minor, build = version_numbers_from_version_string(msg[PingMessage.KEY_VERSION])
+                print('[OK] Client version: {} {}'.format(msg[PingMessage.KEY_VERSION], self.addr))
+
+        def ingest(self, buf: bytearray, nbytes: int):
+            self.input_buffer += buf[:nbytes]
+
+        def message_at_input(self):
+            return bytes(1) in self.input_buffer
+
+        def iter_messages_at_input(self) -> Message:
+            while bytes(1) in self.input_buffer:
+                msg_data, self.input_buffer = self.input_buffer.split(bytes(1), 1)
+                yield Message.decode(msg_data)
+
+        def send(self, data: bytes):
+            self.output_buffer += data
+
+        def has_output_data(self):
+            return len(self.output_buffer) > 0
+
+        def has_input_data(self):
+            return len(self.input_buffer) > 0
+
+        def write_output_packet(self):
+            n_sent = self.sock.send(self.output_buffer[:DOWNLOAD_BUFFER_SIZE])
+            self.output_buffer = self.output_buffer[n_sent:]
+
     def __init__(self, port: int = None, passkey=None):
         self.conf = ClientConfig()
         if port is not None:
@@ -21,6 +69,25 @@ class ServerSyncServer:
 
         self.passkey = self.conf['passkey']
 
+        self.message_handle_map = {
+            PingMessage.TYPE_STR: self._handle_ping,
+            GetRequest.TYPE_STR: self._handle_get,
+            ListRequest.TYPE_STR: self._handle_list,
+            DownloadRequest.TYPE_STR: self._handle_download,
+            SetProfileRequest.TYPE_STR: self._handle_set_profile,
+            ServerRefreshRequest.TYPE_STR: self._handle_refresh_request
+        }
+
+        self.modlist = {}
+        self.modlist_lock = Lock()
+
+        self._modlist_updater_thread = None
+
+        self._input_sockets = []
+        self._output_sockets = []
+
+        self.client_handlers = {}
+
     @property
     def client_side_mod_ids(self):
         return self.conf[CONF_KEY_KNOWN_CLIENT_SIDE_MODS] if CONF_KEY_KNOWN_CLIENT_SIDE_MODS in self.conf else []
@@ -29,197 +96,297 @@ class ServerSyncServer:
     def server_side_mod_ids(self):
         return self.conf[CONF_KEY_KNOWN_SERVER_SIDE_MODS] if CONF_KEY_KNOWN_SERVER_SIDE_MODS in self.conf else []
 
-    def filter_non_sided_mods(self, modlist: dict):
-        client_only_mod_ids = self.client_side_mod_ids
-        server_only_mod_ids = self.server_side_mod_ids
-        to_del = []
-        for modid in modlist:
-            if modid in client_only_mod_ids or modid in server_only_mod_ids:
-                to_del.append(modid)
-        server_only_mod_ids = {}
-        for modid in to_del:
-            server_only_mod_ids[modid] = modlist[modid]
-            del modlist[modid]
+    @server_side_mod_ids.setter
+    def server_side_mod_ids(self, mids: [str]):
+        self.conf[CONF_KEY_KNOWN_SERVER_SIDE_MODS] = mids
 
-        return modlist, server_only_mod_ids
+    @client_side_mod_ids.setter
+    def client_side_mod_ids(self, mids: [str]):
+        self.conf[CONF_KEY_KNOWN_CLIENT_SIDE_MODS] = mids
+
+    def _handle_legacy(self, client: ClientHandler, msg: bytes):
+        # Strip off any null bytes
+        if msg.endswith(bytes(1)):
+            msg = msg.rstrip(bytes(1))
+
+        if msg == b'ping':
+            print('Handling ping request')
+            client.send('pong'.encode())
+        elif msg == b'list':
+                print('Handling list request')
+                client.send(json.dumps({'required': {mid: self.modlist[mid].to_dict() for mid in self.modlist},
+                                     'optional': self.client_side_mod_ids,
+                                     'server-side': self.server_side_mod_ids}).encode())
+
+        elif msg.startswith(b'get '):
+            msg = msg.decode()
+            mod_id = msg.lstrip('get').strip()
+            print('Handling get request: {}'.format(mod_id))
+            try:
+                client.send(json.dumps(self.modlist[mod_id].to_dict()).encode())
+            except KeyError:
+                print('[ER] Unknown mod: {}'.format(mod_id))
+
+        elif msg.startswith(b'download '):
+            msg = msg.decode()
+            mod_id = msg.lstrip('download').strip()
+            print('Handling download request: {}'.format(mod_id))
+            print('  Received download request for mod with id: {}'.format(mod_id))
+            try:
+                mod = self.modlist[mod_id]
+                print('  Uploading {}...   0%'.format(mod.filepath), end='')
+                with open(mod.filepath, 'rb') as ifile:
+                    total_sent = 0
+                    to_send = path.getsize(mod.filepath)
+                    while True:
+                        buf = ifile.read(DOWNLOAD_BUFFER_SIZE)
+                        if len(buf) == 0:
+                            break
+                        client.send(buf)
+                        total_sent += len(buf)
+                        print_progress(int(100*to_send/total_sent))
+            except timeout:
+                print(' [ER] Timed out')
+            except KeyError:
+                print('[ER] Mod with id {} not in modlist'.format(mod_id))
+        else:
+            print('[ER] Unrecognised legacy request: {}'.format(msg))
+
+    def _handle_ping(self, client: ClientHandler, msg: Message):
+        client.set_version_from_ping(msg)
+        client.send(PingMessage().encode())
+
+    def _handle_get(self, client: ClientHandler, msg: Message):
+        mod_id = msg[GetRequest.KEY_ID]
+        try:
+            client.send(GetResponse(self.modlist[mod_id]).encode())
+        except KeyError:
+            client.send(ErrorMessage(GetRequest.ERROR_NOT_FOUND).encode())
+
+    def _handle_list(self, client: ClientHandler, msg: Message):
+        client.send(ListResponse(
+            required={mid: self.modlist[mid].to_dict() for mid in self.modlist if mid not in self.server_side_mod_ids},
+            clientside=self.client_side_mod_ids,
+            serverside=self.server_side_mod_ids).encode())
+
+    def _handle_download(self, client: ClientHandler, msg: Message):
+        mod_id = msg[DownloadRequest.KEY_ID]
+        print('Handling download request: {}'.format(mod_id))
+        print('  Received download request for mod with id: {}'.format(mod_id))
+        try:
+            mod = self.modlist[mod_id]
+            if client.single_message_mode():
+                # Using legacy download mechanism. Load mod into output buffer for sending.
+                with open(mod.filepath, 'rb') as file:
+                    client.output_buffer = file.read()
+                print('[OK] Uploading {} ({} bytes loaded into output buffer)'.format(mod.name, len(client.output_buffer)))
+            # with open(mod.filepath, 'rb') as ifile:
+            #     total_sent = 0
+            #     to_send = path.getsize(mod.filepath)
+            #     try:
+            #         while True:
+            #             buf = ifile.read(DOWNLOAD_BUFFER_SIZE)
+            #             if len(buf) == 0:
+            #                 break
+            #             client.send(buf)
+            #             total_sent += len(buf)
+            #             print_progress(int(100*total_sent/to_send))
+            #     except timeout:
+            #         print('[ER] Timed out')
+        except KeyError:
+            print('[ER] Mod with id {} not in modlist'.format(mod_id))
+            if client.single_message_mode():
+                self._close_client(client.sock)
+            else:
+                client.send(ErrorMessage(DownloadRequest.ERROR_NOT_FOUND, mod_id).encode())
+
+    def _handle_set_profile(self, client: ClientHandler, msg: Message):
+        if self.passkey is not None:
+            cli_passkey = msg[SetProfileRequest.KEY_PASSKEY]
+            if cli_passkey is None:
+                print('[WN] Client profile set failed due to missing passkey')
+                client.send(ErrorMessage(SetProfileRequest.ERROR_CODE_MISSING_PASSKEY,
+                                      'Passkey is missing from request').encode())
+                raise ValueError('Missing passkey')
+            if cli_passkey != self.passkey:
+                print('[WN] Client profile set failed due to invalid passkey: "{}"'.format(cli_passkey))
+                client.send(ErrorMessage(SetProfileRequest.ERROR_CODE_INVALID_PASSKEY, 'Invalid passkey').encode())
+                raise ValueError('Invalid passkey: {}'.format(cli_passkey))
+
+        print('Handling set_profile request')
+        client_mods = msg[SetProfileRequest.KEY_CLIENT_MODS]
+
+        client_only_mod_ids = []
+        server_only_mod_ids = []
+
+        if self.modlist_lock.acquire(True, 1):
+            try:
+                for mid in client_mods:
+                    if mid not in self.modlist:
+                        if mid not in client_only_mod_ids:
+                            client_only_mod_ids.append(mid)
+
+                for mid in self.modlist:
+                    if mid not in client_mods:
+                        if mid not in server_only_mod_ids:
+                            server_only_mod_ids.append(mid)
+
+                self.conf[CONF_KEY_KNOWN_CLIENT_SIDE_MODS] = client_only_mod_ids
+                self.conf[CONF_KEY_KNOWN_SERVER_SIDE_MODS] = server_only_mod_ids
+
+                self.conf.save()
+
+                client.send(SuccessMessage().encode())
+                print('[OK] Client profile updated')
+
+            except:
+                raise
+            finally:
+                self.modlist_lock.release()
+
+    def _handle_refresh_request(self, client: ClientHandler, msg: Message):
+        self.launch_modlist_update_thread()
+        client.send(SuccessMessage().encode())
+
+    def _handle_unknown(self, client: ClientHandler, msg: Message):
+        print('[ER] Unknown message type: {}'.format(msg.type))
+        client.send(ErrorMessage(ErrorMessage.ERROR_CODE_UNRECOGNISED_REQUEST, 'Unknown request type: {}'.format(msg.type)).encode())
+
+    def handle_message_data(self, client: ClientHandler, data: bytes):
+        """
+        Top-level method for handling all messages (legacy and current).
+        Ensures thread-safe access of server attributes.
+        :param client:
+        :param data:
+        :return:
+        """
+        if not self.modlist_lock.acquire(True, 1):
+            client.send(ErrorMessage(message='ServerError: Unable to aquire modlist lock. Please contact your administrator.').encode())
+            raise ThreadError('Unable to aquire modlist lock')
+        try:
+            msg = Message.decode(data)
+            self.message_handle_map.get(msg.type, self._handle_unknown)(client, msg)
+        except json.JSONDecodeError:
+            self._handle_legacy(client, data)
+        except ValueError:
+            pass
+        finally:
+            self.modlist_lock.release()
+
+    def _close_client(self, sock: socket):
+        sock.close()
+        if sock in self.client_handlers:
+            print('[OK] Client connection closed {}'.format(self.client_handlers[sock].addr))
+            del self.client_handlers[sock]
+        else:
+            print('[OK] Socket closed: {}'.format(sock))
+        self._input_sockets.remove(sock)
+        if sock in self._output_sockets:
+            self._output_sockets.remove(sock)
 
     def run(self):
-        while True:
-            server_sock = socket(AF_INET, SOCK_STREAM)
-            modlist = list_mods_in_dir()
-            self.conf.reload()
-            modlist, server_only_mods= self.filter_non_sided_mods(modlist)
-            print('[OK] Filtered down to {} shared mods'.format(len(modlist.keys())))
-            try:
-                print('Starting server on port {}... '.format(self.conf.server_port), end='')
-                try:
-                    server_sock.bind(('', self.conf.server_port))
-                    print('[OK]')
-                except:
-                    print('[ER]')
-                    raise
+        server_sock = socket(AF_INET, SOCK_STREAM)
+        server_sock.setblocking(False)
+        self._input_sockets.append(server_sock)
 
-                server_sock.listen(5)
-                while True:
-                    cli, addr = server_sock.accept()
-                    print('[OK] Client connected: {}'.format(addr))
-                    msg = b''
-                    cli.settimeout(0.5)
-                    try:
-                        while True:
-                            buf = cli.recv(INPUT_BUFFER_SIZE)
-                            if len(buf) == 0:
-                                break
-                            # If null-byte terminated, end of message
-                            if buf.endswith(bytes(1)):
-                                msg += buf[:-1]
-                                break
-                            else:
-                                msg += buf
-                    except timeout:
-                        pass
+        # Refresh modlist first
+        print('[OK] Scanning local dir for mods...   0%', end='')
+        self.modlist_lock.acquire(True, 10)
+        self.modlist = list_mods_in_dir(custom_progress_callback=print_progress)
+        self.modlist_lock.release()
+        if len(self.modlist) == 0:
+            raise NoModsFoundError('[ER] No mods found in dir! Please run server in mods dir!')
+        print(' Found {} mods'.format(len(self.modlist)))
 
-                    if msg == b'ping':
-                        print('Handling ping request')
-                        cli.send('pong'.encode())
+        self.conf.reload()
+
+        print('Starting server on port {}... '.format(self.conf.server_port), end='')
+        try:
+            server_sock.bind(('', self.conf.server_port))
+            print('[OK]')
+
+            server_sock.listen(5)
+            server_sock.settimeout(60)
+            buf = bytearray(DOWNLOAD_BUFFER_SIZE)
+            while True:
+                readable, writeable, exceptional = select.select(self._input_sockets, self._output_sockets, self._input_sockets)
+                for sock in readable:
+                    if sock is server_sock:
+                        connection, addr = server_sock.accept()
+                        connection.setblocking(False)
+                        print('[OK] Client connected: {}'.format(addr))
+                        handler = self.ClientHandler(connection, addr)
+                        self._input_sockets.append(connection)
+                        self.client_handlers[connection] = handler
                     else:
-                        if msg == b'list':
-                            print('Handling list request')
-                            cli.send(json.dumps({'required': {mid: modlist[mid].to_dict() for mid in modlist},
-                                                 'optional': self.client_side_mod_ids,
-                                                 'server-side': self.server_side_mod_ids}).encode())
+                        client = self.client_handlers[sock]
+                        # Read available data into buffer
+                        try:
+                            nbytes = sock.recv_into(buf, DOWNLOAD_BUFFER_SIZE)
+                            client.ingest(buf, nbytes)
 
-                        elif msg.startswith(b'get '):
-                            msg = msg.decode()
-                            mod_id = msg.lstrip('get').strip()
-                            print('Handling get request: {}'.format(mod_id))
-                            if mod_id in modlist:
-                                cli.send(json.dumps(modlist[mod_id].to_dict()).encode())
-                            elif mod_id in server_only_mods:
-                                cli.send(json.dumps(server_only_mods[mod_id].to_dict()).encode())
-
-                        elif msg.startswith(b'download '):
-                            msg = msg.decode()
-                            mod_id = msg.lstrip('download').strip()
-                            print('Handling download request: {}'.format(mod_id))
-                            print('  Received download request for mod with id: {}'.format(mod_id))
-                            if mod_id in modlist:
-                                mod = modlist[mod_id]
-                                print('  Uploading {}...   0%'.format(mod.filepath), end='')
-                                with open(mod.filepath, 'rb') as ifile:
-                                    total_sent = 0
-                                    to_send = path.getsize(mod.filepath)
-                                    try:
-                                        while True:
-                                            buf = ifile.read(DOWNLOAD_BUFFER_SIZE)
-                                            if len(buf) == 0:
-                                                break
-                                            cli.send(buf)
-                                            total_sent += len(buf)
-                                            print_progress(total_sent, to_send)
-                                    except timeout:
-                                        print(' [ER] Timed out')
-                            else:
-                                print('[ER] Mod with id {} not in modlist?!'.format(mod_id))
-                        else:
-                            try:
-                                msg = Message.decode(msg)
-                                if msg.type == PingMessage.TYPE_STR:
-                                    cli.send(PingMessage().encode())
-                                elif msg.type == ListRequest.TYPE_STR:
-                                    cli.send(ListResponse({mid: modlist[mid].to_dict() for mid in modlist},
-                                                          self.client_side_mod_ids,
-                                                          self.server_side_mod_ids).encode())
-                                elif msg.type == GetRequest.TYPE_STR:
-                                    mod_id = msg[GetRequest.KEY_ID]
-                                    if mod_id in modlist:
-                                        cli.send(GetResponse(modlist[mod_id]).encode())
-                                    elif mod_id in server_only_mods:
-                                        cli.send(GetResponse(server_only_mods[mod_id]).encode())
-                                    else:
-                                        cli.send(ErrorMessage(GetRequest.ERROR_NOT_FOUND).encode())
-                                elif msg.type == DownloadRequest.TYPE_STR:
-                                    mod_id = msg[DownloadRequest.KEY_ID]
-                                    print('Handling download request: {}'.format(mod_id))
-                                    print('  Received download request for mod with id: {}'.format(mod_id))
-                                    if mod_id in modlist:
-                                        mod = modlist[mod_id]
-                                        print('  Uploading {}...   0%'.format(mod.filepath), end='')
-                                        with open(mod.filepath, 'rb') as ifile:
-                                            total_sent = 0
-                                            to_send = path.getsize(mod.filepath)
-                                            try:
-                                                while True:
-                                                    buf = ifile.read(DOWNLOAD_BUFFER_SIZE)
-                                                    if len(buf) == 0:
-                                                        break
-                                                    cli.send(buf)
-                                                    total_sent += len(buf)
-                                                    print_progress(total_sent, to_send)
-                                            except timeout:
-                                                print('[ER] Timed out')
-                                    else:
-                                        print('[ER] Mod with id {} not in modlist?!'.format(mod_id))
-                                elif msg.type == SetProfileRequest.TYPE_STR:
-                                    if self.passkey is not None:
-                                        cli_passkey = msg[SetProfileRequest.KEY_PASSKEY]
-                                        if cli_passkey is None:
-                                            print('[WN] Client profile set failed due to missing passkey')
-                                            cli.send(ErrorMessage(SetProfileRequest.ERROR_CODE_MISSING_PASSKEY, 'Passkey is missing from request').encode())
-                                            raise ValueError('Missing passkey')
-                                        if cli_passkey != self.passkey:
-                                            print('[WN] Client profile set failed due to invalid passkey: "{}"'.format(cli_passkey))
-                                            cli.send(ErrorMessage(SetProfileRequest.ERROR_CODE_INVALID_PASSKEY, 'Invalid passkey').encode())
-                                            raise ValueError('Invalid passkey: {}'.format(cli_passkey))
-
-                                    print('Handling set_profile request')
-                                    client_mods = msg[SetProfileRequest.KEY_CLIENT_MODS]
-                                    client_only_mod_ids = []
-                                    server_only_mod_ids = []
-
-                                    # Re-combine server-only mods with modlist
-                                    modlist.update(server_only_mods)
-
-                                    for mid in client_mods:
-                                        if mid not in modlist:
-                                            if mid not in client_only_mod_ids:
-                                                client_only_mod_ids.append(mid)
-
-                                    for mid in modlist:
-                                        if mid not in client_mods:
-                                            if mid not in server_only_mod_ids:
-                                                server_only_mod_ids.append(mid)
-
-                                    self.conf[CONF_KEY_KNOWN_CLIENT_SIDE_MODS] = client_only_mod_ids
-                                    self.conf[CONF_KEY_KNOWN_SERVER_SIDE_MODS] = server_only_mod_ids
-
-                                    self.conf.save()
-
-                                    cli.send(SuccessMessage().encode())
-
-                                    print('[OK] Client profile updated')
-                                    modlist = list_mods_in_dir()
-                                    modlist, server_only_mods = self.filter_non_sided_mods(modlist)
-                                    print('[OK] Filtered down to {} shared mods'.format(len(modlist.keys())))
+                            if nbytes > 0:
+                                if client.input_buffer.startswith(b'{'):
+                                    for msg in client.iter_messages_at_input():
+                                        self.message_handle_map.get(msg.type, self._handle_unknown)(client, msg)
                                 else:
-                                    cli.send(ErrorMessage(ErrorMessage.ERROR_CODE_UNRECOGNISED_REQUEST, 'Unknown request type: {}'.format(msg.type)).encode())
-                            except ValueError:
-                                pass
+                                    # Handle legacy case
+                                    self._handle_legacy(client, client.input_buffer)
 
-                    cli.close()
-                    print('[OK] Disconnected client.')
-            except OSError as e:
-                print(e, file=sys.stderr)
-                # Filter out exception when client forcibly closes connection
-                if e.errno != 10054:
-                    break
-            except KeyboardInterrupt:
-                print('[OK] Closing server')
-                server_sock.close()
+                                if client.has_output_data():
+                                    self._output_sockets.append(client.sock)
+                                else:
+                                    if client.single_message_mode():
+                                        self._close_client(sock)
+                            if nbytes == 0:
+                                # Socket closed
+                                self._close_client(sock)
+
+                        except ConnectionResetError:
+                            print('[ER] Connection reset {}'.format(client.addr))
+                            self._close_client(sock)
+                            continue
+
+                for sock in writeable:
+                    if sock in self.client_handlers:
+                        client = self.client_handlers[sock]
+                        client.write_output_packet()
+                        if not client.has_output_data():
+                            self._output_sockets.remove(sock)
+                            if client.single_message_mode():
+                                self._close_client(client.sock)
+
+                for sock in exceptional:
+                    self._close_client(sock)
+        except:
+            raise
+        finally:
+            print('Stopping server...')
+            for sock in self._input_sockets:
+                if sock != server_sock:
+                    self._close_client(sock)
+            server_sock.close()
+            print('[OK] Server stopped')
+
+    @staticmethod
+    def _modlist_update_thread_func(server, repeat_after=None):
+        while True:
+            modlist = list_mods_in_dir()
+            server.modlist_lock.acquire(True, 10)
+            server.modlist = modlist
+            server.modlist_lock.release()
+            server.modlist_updater_thread = None
+            if repeat_after is None:
                 break
-            except Exception as e:
-                print(e, file=sys.stderr)
-                server_sock.close()
-                print('Restarting...')
-                sleep(1)
-        print('[OK] Server stopped')
+            sleep(repeat_after)
+
+    def launch_modlist_update_thread(self, repeat_after=None):
+        if self._modlist_updater_thread is None or not self._modlist_updater_thread.is_alive():
+            print('[OK] Spawning new modlist updater thread')
+            self._modlist_updater_thread = Thread(target=ServerSyncServer._modlist_update_thread_func,
+                                                  args=[self, repeat_after])
+            # This thread will not stop program from exiting
+            self._modlist_updater_thread.setDaemon(True)
+            self._modlist_updater_thread.start()
+        else:
+            raise ValueError('modlist updater already running')

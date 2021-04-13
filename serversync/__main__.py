@@ -15,7 +15,7 @@ def exit_after_1(code=0):
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser('serversync | Version {}'.format(VERSION))
-    ap.add_argument('--server', action='store_const', const='SERVER', dest='mode', help='Server mode',
+    ap.add_argument('--server', action='store_const', const='SERVER', dest='mode', help='Server mode. If server instance is already running, this will trigger a modlist update.',
                     default='DEFAULT')
     ap.add_argument('--install', action='store_const', const='INSTALL', dest='mode',
                     help='Install commands to context menu')
@@ -155,8 +155,23 @@ if __name__ == '__main__':
         print('[OK] Sync completed!')
 
     elif pargs.mode == 'SERVER':
-        server = ServerSyncServer(pargs.port, pargs.passkey)
-        server.run()
+        # Attempt to connect to existing server
+        cli = Client()
+        try:
+            cli.connect('127.0.0.1')
+            print('Found existing server instance. Requesting modlist refresh... ', end='')
+            ret = cli.send(ServerRefreshRequest())
+            if ret.type == ErrorMessage.TYPE_STR:
+                print('Return code {} [ER]'.format(ret[ErrorMessage.KEY_CODE]))
+                print(ret[ErrorMessage.KEY_MESSAGE], file=sys.stderr)
+                exit(-1)
+            else:
+                print('[OK]')
+                exit(0)
+        except timeout:
+            server = ServerSyncServer(pargs.port, pargs.passkey)
+            server.launch_modlist_update_thread()
+            server.run()
 
     elif pargs.mode in ['INSTALL', 'UNINSTALL']:
         from serversync.config_gui import *
@@ -194,8 +209,10 @@ if __name__ == '__main__':
         modlist = list_mods_in_dir()
         profile = {mid: modlist[mid].to_dict() for mid in modlist}
         cli = Client()
-        print('Connecting & Uploading to server... ', end='')
-
+        print('Connecting to server... ', end='')
+        cli.connect()
+        print('[OK]')
+        print('Uploading to server... ', end='')
         to_send = SetProfileRequest(profile, passkey=pargs.passkey)
         ret = cli.send(to_send)
 

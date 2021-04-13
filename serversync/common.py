@@ -6,12 +6,24 @@ from serversync import VERSION
 
 
 DEFAULT_SERVER_PORT = 25567
-INPUT_BUFFER_SIZE = 1048576
+MESSAGE_BUFFER_SIZE = 4096
 DOWNLOAD_BUFFER_SIZE = 4096
 CONFIG_FILENAME = 'serversync.conf'
 
 CONF_KEY_KNOWN_CLIENT_SIDE_MODS = 'known_client_side_mods'
 CONF_KEY_KNOWN_SERVER_SIDE_MODS = 'known_server_side_mods'
+
+
+class ServerSyncError(Exception):
+    pass
+
+
+class UnsupportedServerError(ServerSyncError):
+    pass
+
+
+class IncompleteDownloadError(ServerSyncError):
+    pass
 
 
 def parse_jar_manifest(data: str):
@@ -154,9 +166,14 @@ class ClientConfig(dict):
                 self.update(json.loads(file.read()))
 
 
-def list_mods_in_dir(dirpath='.', custom_progress_callback = None) -> [ModInfo]:
-    print('Compiling list of mods...   0%', end='', flush=True)
+def list_mods_in_dir(dirpath='.', custom_progress_callback = None, debug=False) -> [ModInfo]:
+    if debug:
+        print('Compiling list of mods...   0%', end='', flush=True)
     to_ret = {}
+
+    if 'mods' in listdir(dirpath) and path.isdir(path.join(dirpath, 'mods')):
+        dirpath = path.join(dirpath, 'mods')
+
     files = [f for f in listdir(dirpath) if f.endswith('.jar')]
     nfiles = len(files)
     for i in range(nfiles):
@@ -165,21 +182,48 @@ def list_mods_in_dir(dirpath='.', custom_progress_callback = None) -> [ModInfo]:
             m = ModInfo(path.join(dirpath, f))
             to_ret[m.id] = m
         except KeyError as e:
-            print('[WN] {}: {}'.format(f, e))
+            if debug:
+                print('[WN] {}: {}'.format(f, e))
         except zipfile.BadZipFile as e:
-            print('[WN]: {}. Deleted.'.format(e))
+            if debug:
+                print('[WN]: {}. Deleted.'.format(e))
 
         prog = int(100*(i+1)/nfiles)
-        print('\b\b\b\b{:>3}%'.format(prog), end='', flush=True)
+        if debug:
+            print('\b\b\b\b{:>3}%'.format(prog), end='', flush=True)
         if custom_progress_callback is not None:
             custom_progress_callback(prog)
-    print('\b\b\b\b\b  Found {} mods [OK]'.format(len(to_ret)))
+    if debug:
+        print('\b\b\b\b\b  Found {} mods [OK]'.format(len(to_ret)))
     return to_ret
 
 
-def print_progress(cur, total):
-    percent = int(100 * cur / total)
-    print('\b\b\b\b{:>3}%'.format(percent), end='', flush=True)
+def print_progress(prog):
+    print('\b\b\b\b{:>3}%'.format(prog), end='', flush=True)
+
+
+def version_numbers_from_version_string(ver_str: str):
+    major = None
+    minor = None
+    build = None
+
+    if '.' in ver_str:
+        parts = ver_str.split('.')
+        major = int(parts[0])
+        if len(parts) == 3:
+            minor = int(parts[1])
+            build = int(parts[2])
+        elif 'b' in parts[1]:
+            tmp = parts[1].split('b')
+            minor = int(tmp[0])
+            build = int(tmp[1])
+
+    elif 'b' in ver_str:
+        parts = ver_str.split('b')
+        major = int(parts[0])
+        minor = int(parts[1])
+
+    return major, minor, build
 
 
 class ReturnedErrorMessageError(Exception):
@@ -353,9 +397,12 @@ class PingMessage(Message):
         super().__init__()
         self[self.KEY_VERSION] = VERSION
 
-
 class DownloadRequest(GetRequest):
     TYPE_STR = 'download'
+
+
+class ServerRefreshRequest(Message):
+    TYPE_STR = 'refresh'
 
 
 messageTypeToConstructor = {ErrorMessage.TYPE_STR: ErrorMessage,

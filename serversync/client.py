@@ -4,6 +4,7 @@ from serversync.config_gui import SettingsWidget
 from socket import socket, AF_INET, SOCK_STREAM, error, gaierror, timeout
 from os import remove
 import sys
+from time import sleep
 
 from threading import Thread
 
@@ -16,39 +17,93 @@ class Client:
     def __init__(self):
         self.conf = ClientConfig()
         self.on_progress_cb = None
+        self.sock = None
+
+    def connect(self, ip=None, port=None):
+        if self.sock is not None:
+            self.close()
+
+        if ip is None:
+            ip = self.conf.server_ip
+        if port is None:
+            port = self.conf.server_port
+
+        self.sock = self._make_sock()
+        try:
+            # This step will both ping the server to check connection and inform server of the client version (required)
+            if self.get_server_ver() == 'legacy':
+                raise UnsupportedServerError('This client version does not support legacy servers. Either downgrade '
+                                             'serversync to legacy (0.x) version, or contact your server administrator.')
+        except:
+            self.sock.close()
+            raise
+
+    def close(self):
+        if self.sock is not None:
+            self.sock.close()
+            self.sock = None
 
     def _make_sock(self):
         sock = socket(AF_INET, SOCK_STREAM)
+        sock.settimeout(1)
         sock.connect(self.conf.server_address)
         return sock
 
-    def ping(self):
+    def get_server_ver(self):
         try:
-            self.send()
-            return True
-        except error:
-            return False
+            ret = self.send(PingMessage())
+            if ret.type == PingMessage.TYPE_STR:
+                return ret[PingMessage.KEY_VERSION]
+            else:
+                raise ValueError('Unexpected server response: {}'.format(ret))
+        except json.JSONDecodeError:
+            # Could be legacy server
+            ret_bytes = self.send_raw(b'ping')
+            if ret_bytes == b'pong':
+                return 'legacy'
+            else:
+                raise ValueError('Unknown server')
 
     def send(self, message: Message):
-        sock = self._make_sock()
+        return Message.decode(self.send_raw(message.encode()))
 
-        sock.send(message.encode())
+    def send_raw(self, data: bytes):
+        if self.sock is None:
+            self.connect()
 
-        ret = b''
         try:
-            while True:
-                buf = sock.recv(INPUT_BUFFER_SIZE)
-                if len(buf) == 0:
-                    break
-                ret += buf
-        except timeout:
-            pass
-        finally:
-            sock.close()
+            to_write = len(data)
+            while to_write > 0:
+                if to_write > DOWNLOAD_BUFFER_SIZE:
+                    nbytes = self.sock.send(data[-to_write:DOWNLOAD_BUFFER_SIZE-to_write])
+                else:
+                    nbytes = self.sock.send(data[-to_write:])
+                to_write -= nbytes
 
-        if len(ret) == 0:
-            raise ConnectionRefusedError('Server didnt respond')
-        return Message.decode(ret)
+            ret = b''
+            buf = bytearray(DOWNLOAD_BUFFER_SIZE)
+            retry_counter = 0
+            while True:
+                nbytes = self.sock.recv_into(buf)
+                if nbytes == 0:
+                    # All messages are terminated with a null byte.
+                    if ret.endswith(bytes(1)):
+                        break
+                    else:
+                        if retry_counter == 10:
+                            break
+                        retry_counter += 1
+                        sleep(0.1)
+                else:
+                    retry_counter = 0
+                    ret += buf[:nbytes]
+                    if ret[-1] == 0:
+                        break
+
+            return ret
+
+        except:
+            raise
 
     def get_server_mod_list(self):
         return self.send(ListRequest())
@@ -71,33 +126,64 @@ class Client:
         bytes_read = 0
         bytes_remaining = modsize
 
-        with open(output_filepath, 'wb') as file:
-            sock = self._make_sock()
-            sock.settimeout(1)
-            sock.send(DownloadRequest(modid).encode())
-            while True:
-                try:
-                    buf = sock.recv(min(DOWNLOAD_BUFFER_SIZE, bytes_remaining))
-                    if len(buf) == 0:
-                        # Socket closed
+        if modsize == 0:
+            raise ValueError('Modsize cannot be 0')
+        try:
+            with open(output_filepath, 'wb') as file:
+
+                self.sock.send(DownloadRequest(modid).encode())
+                buf = bytearray(DOWNLOAD_BUFFER_SIZE)
+
+                attempt_counter = 0
+                first_buffer = True
+                while bytes_remaining > 0:
+                    try:
+                        nbytes = self.sock.recv_into(buf, DOWNLOAD_BUFFER_SIZE)
+                        if nbytes == 0:
+                            if bytes_remaining > 0:
+                                if attempt_counter == 3:
+                                    raise IncompleteDownloadError('Incomplete download! Expected {} bytes, got {}.'.format(modsize, bytes_read))
+                                attempt_counter += 1
+                                sleep(0.1)
+                        else:
+                            # Check for response message instead of regular download (in case of error)
+                            if first_buffer:
+                                first_buffer = False
+                                if buf.startswith(b'{'):
+                                    # Response message from server instead
+                                    data = buf[:nbytes]
+
+                                    # Handle big messages (future-proofing)
+                                    if not data.endswith(bytes(1)):
+                                        try:
+                                            while True:
+                                                b = self.sock.recv(DOWNLOAD_BUFFER_SIZE)
+                                                if len(b) == 0:
+                                                    break
+                                                if data.endswith(bytes(1)):
+                                                    break
+                                        except timeout:
+                                            raise ServerSyncError('Unexpected termination of server during message parsing. Last received data: {}'.format(data))
+
+                                    msg = Message.decode(data)
+                                    raise ServerSyncError('Received message from server: {}'.format(msg))
+
+                            attempt_counter = 0
+                            file.write(buf[:nbytes])
+                            bytes_read += nbytes
+                            bytes_remaining -= nbytes
+                            if self.on_progress_cb is not None:
+                                self.on_progress_cb(bytes_read, modsize)
+                    except ServerSyncError:
+                        raise
+                    except error:
                         break
-                except error:
-                    break
-                except:
-                    break
+                    except:
+                        break
 
-                if bytes_read >= modsize:
-                    break
-
-                file.write(buf)
-                bytes_read += len(buf)
-                bytes_remaining -= len(buf)
-                if self.on_progress_cb is not None:
-                    self.on_progress_cb(bytes_read, modsize)
-        if bytes_read != modsize and modsize > 0:
+        except IncompleteDownloadError:
             remove(output_filepath)
-            raise ValueError('Incomplete download! Expected {} bytes, got {}.'.format(modsize, bytes_read))
-        sock.close()
+            raise
 
 
 class ClientGUI(QWidget):
@@ -190,7 +276,7 @@ class ClientGUI(QWidget):
     def __init__(self):
         super(ClientGUI, self).__init__()
 
-        self.conf = ClientConfig()
+        self.client = Client()
 
         if 'keep' not in self.conf:
             self.conf['keep'] = []
@@ -250,6 +336,10 @@ class ClientGUI(QWidget):
             # First time setup
             self.conf.save()        # Create config file
             self._show_settings()
+
+    @property
+    def conf(self):
+        return self.client.conf
 
     def on_show_message_box(self, title, message, error):
         QMessageBox.about(self, title, message)
@@ -370,16 +460,23 @@ class ClientGUI(QWidget):
         self.thread.start()
 
     def _on_rescan_button_pressed(self):
+        try:
+            self.client.connect()
+        except UnsupportedServerError as e:
+            self.on_show_message_box('Unsupported server', str(e), False)
+            return
+
         if self._scanner_running:
             # Cancel scan
             self.modloader.cancelScanSignal.emit()
         else:
             self.modlist_widget.clear_table()
-            client = Client()
+
+
             # self.rescan_btn.setEnabled(False)
             self.rescan_btn.setText('Cancel')
             try:
-                self.server_modlist = client.get_server_mod_list()
+                self.server_modlist = self.client.get_server_mod_list()
 
                 self.thread = QThread()
                 self.modloader = ModLoader(self)
@@ -466,6 +563,7 @@ class ModLoader(QObject):
     def __init__(self, client_gui: ClientGUI):
         super().__init__()
         self.parent = client_gui
+        self.client = client_gui.client
         self.cancelScanSignal.connect(self._on_cancel_signal)
         self.running = False
 
@@ -475,14 +573,13 @@ class ModLoader(QObject):
 
     def run(self) -> None:
         self.running = True
-        client = Client()
         # self.text.setText('Pulling mod config from server...')
         try:
-            server_mods = client.get_server_mod_list()
+            server_mods = self.client.get_server_mod_list()
         except error as e:
             self.onErrorSignal.emit('Failed to connect to server', 'Failed to connect to server at {}:{}\n {}'.format(
-                client.conf.server_ip, client.conf.server_port, e), False)
-            self.finished.emit()
+                self.client.conf.server_ip, self.client.conf.server_port, e), False)
+            self.finished.emit(True)
             return
 
         self.progress.emit(0)

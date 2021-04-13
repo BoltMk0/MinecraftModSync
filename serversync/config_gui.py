@@ -6,7 +6,7 @@ from serversync.common import *
 from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QMessageBox, QGridLayout, QLabel
 import sys
 
-from socket import socket, SOCK_STREAM, AF_INET, error, gethostbyname, gaierror
+from socket import socket, SOCK_STREAM, AF_INET, error, gethostbyname, gaierror, timeout
 
 
 def install_context_menu():
@@ -88,15 +88,32 @@ class SettingsWidget(QWidget):
 
     def _test(self):
         sock = socket(AF_INET, SOCK_STREAM)
+        sock.settimeout(1)
         try:
             hostname = self.ip_option.input.text()
             ret = gethostbyname(hostname)
             sock.connect((hostname, int(self.port_option.input.text())))
-            sock.send('ping'.encode())
-            if sock.recv(INPUT_BUFFER_SIZE).decode() == 'pong':
-                QMessageBox.about(self, 'Success', 'Successfully connected to ServerSync instance')
-            else:
-                QMessageBox.about(self, 'Failed', 'Server failed to respond correctly.')
+            try:
+                sock.send(PingMessage().encode())
+                msg = Message.decode(sock.recv(MESSAGE_BUFFER_SIZE))
+
+                if msg.type == PingMessage.TYPE_STR:
+                    QMessageBox.about(self, 'Success', 'Successfully connected to ServerSync {} server'.format(
+                        msg[PingMessage.KEY_VERSION]))
+                else:
+                    QMessageBox.about(self, 'Failed', 'Server failed to respond correctly.')
+
+            except timeout:
+                # Possibly old server, try legacy ping:
+                sock.send(b'ping')
+                ret = sock.recv(MESSAGE_BUFFER_SIZE)
+
+                if ret == b'pong':
+                    QMessageBox.about(self, 'Success', 'Successfully connected to legacy (0.x) ServerSync server'.format(
+                        msg[PingMessage.KEY_VERSION]))
+                else:
+                    QMessageBox.about(self, 'Failed', 'Server failed to respond correctly.')
+
         except gaierror:
             QMessageBox.about(self, "Unable to connect to server", 'Unable to resolve hostname: "{}"'.format(hostname))
         except error as e:
