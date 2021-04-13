@@ -3,6 +3,8 @@ from time import sleep
 from socket import timeout
 import select
 from threading import Thread, Lock, ThreadError
+from os import makedirs
+from shutil import rmtree, copy
 
 
 class NoModsFoundError(Exception):
@@ -10,6 +12,56 @@ class NoModsFoundError(Exception):
 
 
 class ServerSyncServer:
+    class ModCache(dict):
+        CACHE_DIR = '.serversync_cache'
+        """
+        Manager for caching all mods at server launch (in case of mod changes during server runtime)
+        """
+        def __init__(self, cache_dir=None):
+            super().__init__()
+            if cache_dir is None:
+                cache_dir = self.CACHE_DIR
+            self.cachedir = cache_dir
+            self.preloaded = []
+            self.clear()
+
+        def __del__(self):
+            print('[OK] Cleaning cache dir')
+            rmtree(self.cachedir)
+
+        def preload(self, mod: ModInfo):
+            cached_file = path.join(self.cachedir, path.basename(mod.filepath))
+            copy(mod.filepath, cached_file)
+            self.preloaded.append(cached_file)
+
+        def reload(self):
+            self.clear()
+            print('Scanning local dir for mods...   0%', end='')
+            modlist = list_mods_in_dir(custom_progress_callback=print_progress)
+            nmods = len(modlist)
+            print('\b\b\b\bfound {} mods [OK]'.format(nmods))
+            print('Building mod cache...   0%', end='')
+            counter = 0
+            for m_id in modlist:
+                self.add_mod(modlist[m_id])
+                counter += 1
+                print_progress(int(100*counter/nmods))
+            print('\b\b\b\b[OK]')
+
+        def clear(self):
+            if path.exists(self.cachedir):
+                rmtree(self.cachedir)
+            makedirs(self.cachedir)
+            super().clear()
+
+        def add_mod(self, mod: ModInfo):
+            cached_file = path.join(self.cachedir, path.basename(mod.filepath))
+            if cached_file in self.preloaded:
+                self.preloaded.remove(cached_file)
+            else:
+                copy(mod.filepath, cached_file)
+            self[mod.id] = ModInfo(cached_file)
+
     class ClientHandler:
         def __init__(self, cli: socket, addr):
             self.sock = cli
@@ -53,7 +105,7 @@ class ServerSyncServer:
             self.output_buffer = self.output_buffer[n_sent:]
 
     def __init__(self, port: int = None, passkey=None):
-        self.conf = ClientConfig()
+        self.conf = ServerSyncConfig()
         if port is not None:
             self.conf.server_port = port
             self.conf.save()
@@ -79,9 +131,10 @@ class ServerSyncServer:
             ServerStopRequest.TYPE_STR: self._handle_stop_request
         }
 
-        self.modlist = {}
+        self.modcache = self.ModCache()
+
         self.client_side_modlist = {}
-        self.modlist_lock = Lock()
+        self.modcache_lock = Lock()
 
         self._modlist_updater_thread = None
 
@@ -118,16 +171,25 @@ class ServerSyncServer:
             client.send('pong'.encode())
         elif msg == b'list':
                 print('Handling list request')
-                client.send(json.dumps({'required': {mid: self.modlist[mid].to_dict() for mid in self.modlist},
-                                     'optional': self.client_side_mod_ids,
-                                     'server-side': self.server_side_mod_ids}).encode())
+                required = {}
+                for mid in self.modcache:
+                    try:
+                        required[mid] = self.modcache[mid].to_dict()
+                    except FileNotFoundError as e:
+                        print('[ER] {}'.format(str(e)))
+                        del self.modcache[mid]
+                        print('WARNING: Mod with id {} removed Resolved. Removed {} from modlist'.format(mid))
+
+                client.send(json.dumps({'required':required,
+                                        'optional': self.client_side_mod_ids,
+                                        'server-side': self.server_side_mod_ids}).encode())
 
         elif msg.startswith(b'get '):
             msg = msg.decode()
             mod_id = msg.lstrip('get').strip()
             print('Handling get request: {}'.format(mod_id))
             try:
-                client.send(json.dumps(self.modlist[mod_id].to_dict()).encode())
+                client.send(json.dumps(self.modcache[mod_id].to_dict()).encode())
             except KeyError:
                 print('[ER] Unknown mod: {}'.format(mod_id))
 
@@ -137,7 +199,7 @@ class ServerSyncServer:
             print('Handling download request: {}'.format(mod_id))
             print('  Received download request for mod with id: {}'.format(mod_id))
             try:
-                mod = self.modlist[mod_id]
+                mod = self.modcache[mod_id]
                 print('  Uploading {}...   0%'.format(mod.filepath), end='')
                 with open(mod.filepath, 'rb') as ifile:
                     total_sent = 0
@@ -163,13 +225,13 @@ class ServerSyncServer:
     def _handle_get(self, client: ClientHandler, msg: Message):
         mod_id = msg[GetRequest.KEY_ID]
         try:
-            client.send(GetResponse(self.modlist[mod_id]).encode())
+            client.send(GetResponse(self.modcache[mod_id]).encode())
         except KeyError:
             client.send(ErrorMessage(GetRequest.ERROR_NOT_FOUND).encode())
 
     def _handle_list(self, client: ClientHandler, msg: Message):
         client.send(ListResponse(
-            required={mid: self.modlist[mid].to_dict() for mid in self.modlist if mid not in self.server_side_mod_ids},
+            required={mid: self.modcache[mid].to_dict() for mid in self.modcache if mid not in self.server_side_mod_ids},
             clientside=self.client_side_mod_ids,
             serverside=self.server_side_mod_ids).encode())
 
@@ -178,7 +240,7 @@ class ServerSyncServer:
         print('Handling download request: {}'.format(mod_id))
         print('  Received download request for mod with id: {}'.format(mod_id))
         try:
-            mod = self.modlist[mod_id]
+            mod = self.modcache[mod_id]
             if client.single_message_mode():
                 # Using legacy download mechanism. Load mod into output buffer for sending.
                 with open(mod.filepath, 'rb') as file:
@@ -223,14 +285,14 @@ class ServerSyncServer:
         client_only_mod_ids = []
         server_only_mod_ids = []
 
-        if self.modlist_lock.acquire(True, 1):
+        if self.modcache_lock.acquire(True, 1):
             try:
                 for mid in client_mods:
-                    if mid not in self.modlist:
+                    if mid not in self.modcache:
                         if mid not in client_only_mod_ids:
                             client_only_mod_ids.append(mid)
 
-                for mid in self.modlist:
+                for mid in self.modcache:
                     if mid not in client_mods:
                         if mid not in server_only_mod_ids:
                             server_only_mod_ids.append(mid)
@@ -246,7 +308,7 @@ class ServerSyncServer:
             except:
                 raise
             finally:
-                self.modlist_lock.release()
+                self.modcache_lock.release()
 
     def _handle_refresh_request(self, client: ClientHandler, msg: Message):
         self.launch_modlist_update_thread()
@@ -271,7 +333,7 @@ class ServerSyncServer:
         :param data:
         :return:
         """
-        if not self.modlist_lock.acquire(True, 1):
+        if not self.modcache_lock.acquire(True, 1):
             client.send(ErrorMessage(message='ServerError: Unable to aquire modlist lock. Please contact your administrator.').encode())
             raise ThreadError('Unable to aquire modlist lock')
         try:
@@ -282,7 +344,7 @@ class ServerSyncServer:
         except ValueError:
             pass
         finally:
-            self.modlist_lock.release()
+            self.modcache_lock.release()
 
     def _close_client(self, sock: socket):
         sock.close()
@@ -303,13 +365,12 @@ class ServerSyncServer:
         self._input_sockets.append(self.server_sock)
 
         # Refresh modlist first
-        print('[OK] Scanning local dir for mods...   0%', end='')
-        self.modlist_lock.acquire(True, 10)
-        self.modlist = list_mods_in_dir(custom_progress_callback=print_progress)
-        self.modlist_lock.release()
-        if len(self.modlist) == 0:
+        self.modcache_lock.acquire(True, 10)
+        self.modcache.reload()
+        self.modcache_lock.release()
+        if len(self.modcache) == 0:
             raise NoModsFoundError('[ER] No mods found in dir! Please run server in mods dir!')
-        print(' Found {} mods'.format(len(self.modlist)))
+        print(' Found {} mods'.format(len(self.modcache)))
 
         self.conf.reload()
 
@@ -388,12 +449,33 @@ class ServerSyncServer:
     def _modlist_update_thread_func(server, repeat_after=None):
         while True:
             modlist = list_mods_in_dir()
-            server.modlist_lock.acquire(True, 10)
-            server.modlist = modlist
-            server.modlist_lock.release()
+
+            for mid in modlist:
+                mod = modlist[mid]
+                if mid not in server.modcache:
+                    server.modcache.preload(mod)
+
+            server.modcache_lock.acquire(True, 10)
+            to_del = []
+            for mid in server.modcache:
+                if mid not in modlist:
+                    to_del.append(mid)
+
+            for mid in to_del:
+                del server.modcache[mid]
+
+            for mid in modlist:
+                mod = modlist[mid]
+                if mid not in server.modcache:
+                    server.modcache.add_mod(mod)
+
+            server.modcache_lock.release()
+
             server.modlist_updater_thread = None
+
             if repeat_after is None:
                 break
+
             sleep(repeat_after)
 
     def launch_modlist_update_thread(self, repeat_after=None):

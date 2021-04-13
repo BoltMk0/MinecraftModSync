@@ -66,13 +66,13 @@ class SettingsWidget(QWidget):
         self.initUI()
 
     def _reset(self):
-        conf = ClientConfig()
+        conf = ServerSyncConfig()
         self.ip_option.input.setText(conf.server_ip)
         self.port_option.input.setText(str(conf.server_port))
 
     def _save(self):
         try:
-            conf = ClientConfig()
+            conf = ServerSyncConfig()
             conf.server_port = int(self.port_option.input.text())
             conf.server_ip = self.ip_option.input.text()
             try:

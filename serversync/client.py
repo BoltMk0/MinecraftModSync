@@ -15,7 +15,7 @@ from PyQt5.Qt import Qt, QObject, pyqtSignal, QThread, QFont
 
 class Client:
     def __init__(self):
-        self.conf = ClientConfig()
+        self.conf = ServerSyncConfig()
         self.on_progress_cb = None
         self.sock = None
 

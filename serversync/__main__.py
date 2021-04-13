@@ -172,7 +172,6 @@ if __name__ == '__main__':
                 exit(0)
         except timeout:
             server = ServerSyncServer(pargs.port, pargs.passkey)
-            server.launch_modlist_update_thread()
             server.run()
     elif pargs.mode == 'STOP_SERVER':
         cli = Client()
@@ -229,6 +228,7 @@ if __name__ == '__main__':
     elif pargs.mode == 'CONFIG_GUI':
         from serversync.config_gui import config_editor_session
         config_editor_session()
+
     elif pargs.mode == 'SET_PROFILE':
         print('Building profile')
         modlist = list_mods_in_dir()

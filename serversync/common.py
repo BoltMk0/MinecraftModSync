@@ -123,7 +123,7 @@ class ModInfo:
         }
 
 
-class ClientConfig(dict):
+class ServerSyncConfig(dict):
     def __init__(self, filepath=CONFIG_FILENAME):
         super().__init__()
         self.filepath = filepath
