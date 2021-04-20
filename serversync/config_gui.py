@@ -3,7 +3,7 @@ from os import getcwd
 import sys
 from serversync.common import *
 
-from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QMessageBox, QGridLayout, QLabel
+from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QMessageBox, QGridLayout, QLabel, QCheckBox
 import sys
 
 from socket import socket, SOCK_STREAM, AF_INET, error, gethostbyname, gaierror, timeout
@@ -69,12 +69,15 @@ class SettingsWidget(QWidget):
         conf = ServerSyncConfig()
         self.ip_option.input.setText(conf.server_ip)
         self.port_option.input.setText(str(conf.server_port))
+        self.enable_redirects.setChecked(conf.allow_redirects)
 
     def _save(self):
         try:
             conf = ServerSyncConfig()
             conf.server_port = int(self.port_option.input.text())
             conf.server_ip = self.ip_option.input.text()
+            conf.allow_redirects = self.enable_redirects.isChecked()
+
             try:
                 gethostbyname(conf.server_ip)
             except gaierror:
@@ -131,20 +134,24 @@ class SettingsWidget(QWidget):
         self.ip_option = self.Option(grid, 'Server IP', 'localhost', 0)
         self.port_option = self.Option(grid, 'Server Port', str(DEFAULT_SERVER_PORT), 1)
 
+        self.enable_redirects = QCheckBox(self)
+        grid.addWidget(QLabel("Allow Redirects"), 3, 0)
+        grid.addWidget(self.enable_redirects, 3, 1)
+
         reset_btn = QPushButton()
         reset_btn.setText('Reset')
         reset_btn.clicked.connect(self._reset)
-        grid.addWidget(reset_btn, 3, 0)
+        grid.addWidget(reset_btn, 4, 0)
 
         test_btn = QPushButton()
         test_btn.setText('Test')
         test_btn.clicked.connect(self._test)
-        grid.addWidget(test_btn, 3, 1)
+        grid.addWidget(test_btn, 4, 1)
 
         save_btn = QPushButton()
         save_btn.setText('Save')
         save_btn.clicked.connect(self._save)
-        grid.addWidget(save_btn, 3, 2)
+        grid.addWidget(save_btn, 4, 2)
 
         self._reset()
         self.show()

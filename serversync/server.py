@@ -5,25 +5,35 @@ import select
 from threading import Thread, Lock, ThreadError
 from os import makedirs
 from shutil import rmtree, copy
+import requests
+from flask import Flask, send_file, abort
+
+
+HTTP_SERVER_PORT = 25568
+CONF_KEY_REDIRECT_MIN_MODSIZE = 'redirect_min_modsize'
+DEFAULT_REDIRECT_MIN_MODSIZE = 1048576
 
 
 class NoModsFoundError(Exception):
     pass
 
 
-class ServerSyncServer:
+class ServerSyncServer():
     class ModCache(dict):
         CACHE_DIR = '.serversync_cache'
         """
         Manager for caching all mods at server launch (in case of mod changes during server runtime)
         """
         def __init__(self, cache_dir=None):
-            super().__init__()
             if cache_dir is None:
                 cache_dir = self.CACHE_DIR
             self.cachedir = cache_dir
             self.preloaded = []
             self.clear()
+
+        def from_filename(self, filename):
+            filepath = path.join(self.cachedir, filename)
+            return ModInfo(filepath)
 
         def __del__(self):
             print('[OK] Cleaning cache dir')
@@ -70,15 +80,22 @@ class ServerSyncServer:
             self.version_minor = -1
             self.input_buffer = bytes()
             self.output_buffer = bytes()
+            self.redirect_supported = False
 
         def single_message_mode(self):
             # Client 1.3+ operates multi-message mode
             return self.version_major < 1 or (self.version_major == 1 and self.version_minor < 3)
 
-        def set_version_from_ping(self, msg: Message):
+        def update_client_data_from_ping(self, msg: Message):
             if PingMessage.KEY_VERSION in msg:
                 self.version_major, self.version_minor, build = version_numbers_from_version_string(msg[PingMessage.KEY_VERSION])
-                print('[OK] Client version: {} {}'.format(msg[PingMessage.KEY_VERSION], self.addr))
+
+            if PingMessage.KEY_SUPPORTS_HTTP_REDIRECT in msg:
+                self.redirect_supported = msg[PingMessage.KEY_SUPPORTS_HTTP_REDIRECT]
+            else:
+                self.redirect_supported = False
+
+            print('[OK] Client Info updated: Address: {} | Version {} | Allows redirects: {}'.format(self.addr, msg[PingMessage.KEY_VERSION], self.redirect_supported))
 
         def ingest(self, buf: bytearray, nbytes: int):
             self.input_buffer += buf[:nbytes]
@@ -128,7 +145,8 @@ class ServerSyncServer:
             DownloadRequest.TYPE_STR: self._handle_download,
             SetProfileRequest.TYPE_STR: self._handle_set_profile,
             ServerRefreshRequest.TYPE_STR: self._handle_refresh_request,
-            ServerStopRequest.TYPE_STR: self._handle_stop_request
+            ServerStopRequest.TYPE_STR: self._handle_stop_request,
+            ServerRegisterModHTTPLink.TYPE_STR: self._handle_mod_http_link
         }
 
         self.modcache = self.ModCache()
@@ -145,21 +163,51 @@ class ServerSyncServer:
 
         self.client_handlers = {}
 
+        self.http_server = None
+        self.http_server_thread = None
+
+        if self.conf.allow_redirects:
+            if CONF_KEY_REDIRECT_MIN_MODSIZE not in self.conf:
+                self.conf[CONF_KEY_REDIRECT_MIN_MODSIZE] = DEFAULT_REDIRECT_MIN_MODSIZE
+                self.conf.save()
+
+            self.http_server = Flask(__name__)
+            self.http_server_thread = Thread(target=self.http_server.run, args=('0.0.0.0', HTTP_SERVER_PORT))
+
+            @self.http_server.route('/download/<filename>')
+            def handle_mod_download(filename):
+                if self.modcache_lock.acquire(True, 5):
+                    try:
+                        mod = self.modcache.from_filename(filename)
+                        return send_file(mod.filepath)
+                    except Exception as e:
+                        return abort(404)
+                    finally:
+                        self.modcache_lock.release()
+                else:
+                    return abort(500)
+
+            self.http_server_thread.start()
+
     @property
     def client_side_mod_ids(self):
-        return self.conf[CONF_KEY_KNOWN_CLIENT_SIDE_MODS] if CONF_KEY_KNOWN_CLIENT_SIDE_MODS in self.conf else []
+        if CONF_KEY_KNOWN_CLIENT_SIDE_MODS not in self.conf:
+            self.conf[CONF_KEY_KNOWN_CLIENT_SIDE_MODS] = []
+        return self.conf[CONF_KEY_KNOWN_CLIENT_SIDE_MODS]
+
+    @client_side_mod_ids.setter
+    def client_side_mod_ids(self, mids: [str]):
+        self.conf[CONF_KEY_KNOWN_CLIENT_SIDE_MODS] = mids
 
     @property
     def server_side_mod_ids(self):
+        if CONF_KEY_KNOWN_SERVER_SIDE_MODS not in self.conf:
+            self.conf[CONF_KEY_KNOWN_SERVER_SIDE_MODS] = []
         return self.conf[CONF_KEY_KNOWN_SERVER_SIDE_MODS] if CONF_KEY_KNOWN_SERVER_SIDE_MODS in self.conf else []
 
     @server_side_mod_ids.setter
     def server_side_mod_ids(self, mids: [str]):
         self.conf[CONF_KEY_KNOWN_SERVER_SIDE_MODS] = mids
-
-    @client_side_mod_ids.setter
-    def client_side_mod_ids(self, mids: [str]):
-        self.conf[CONF_KEY_KNOWN_CLIENT_SIDE_MODS] = mids
 
     def _handle_legacy(self, client: ClientHandler, msg: bytes):
         # Strip off any null bytes
@@ -219,8 +267,10 @@ class ServerSyncServer:
             print('[ER] Unrecognised legacy request: {}'.format(msg))
 
     def _handle_ping(self, client: ClientHandler, msg: Message):
-        client.set_version_from_ping(msg)
-        client.send(PingMessage().encode())
+        client.update_client_data_from_ping(msg)
+        ret_mst = PingMessage()
+        ret_mst[PingMessage.KEY_SUPPORTS_HTTP_REDIRECT] = True
+        client.send(ret_mst.encode())
 
     def _handle_get(self, client: ClientHandler, msg: Message):
         mod_id = msg[GetRequest.KEY_ID]
@@ -240,9 +290,18 @@ class ServerSyncServer:
         print('Handling download request: {}'.format(mod_id))
         try:
             mod = self.modcache[mod_id]
-            with open(mod.filepath, 'rb') as file:
-                client.output_buffer = file.read()
-            print('[OK] Uploading {} ({} bytes loaded into output buffer)'.format(mod.name, len(client.output_buffer)))
+            redirect_size = self.conf[CONF_KEY_REDIRECT_MIN_MODSIZE]
+            if client.redirect_supported and self.http_server is not None and \
+                    redirect_size < mod.size:
+                public_ip = requests.get('https://api.ipify.org').text
+                mod_filename = path.basename(mod.filepath)
+                url = 'http://{}:{}/download/{}'.format(public_ip, HTTP_SERVER_PORT, mod_filename)
+                client.send(RedirectMessage(mod.id, url).encode())
+                print('[OK] Redirected client to {}'.format(url))
+            else:
+                with open(mod.filepath, 'rb') as file:
+                    client.output_buffer = file.read()
+                print('[OK] Uploading {} ({} bytes loaded into output buffer)'.format(mod.name, len(client.output_buffer)))
 
         except KeyError:
             print('[ER] Mod with id {} not in modlist'.format(mod_id))
@@ -282,8 +341,8 @@ class ServerSyncServer:
                         if mid not in server_only_mod_ids:
                             server_only_mod_ids.append(mid)
 
-                self.conf[CONF_KEY_KNOWN_CLIENT_SIDE_MODS] = client_only_mod_ids
-                self.conf[CONF_KEY_KNOWN_SERVER_SIDE_MODS] = server_only_mod_ids
+                self.client_side_mod_ids = client_only_mod_ids
+                self.server_side_mod_ids = server_only_mod_ids
 
                 self.conf.save()
 
@@ -305,6 +364,41 @@ class ServerSyncServer:
             self.running = False
             # Directly send success message before closing
             client.sock.send(SuccessMessage().encode())
+        client.sock.send(ErrorMessage(message='Not allowed to close server from another machine!').encode())
+
+    def _handle_mod_http_link(self, client: ClientHandler, msg: Message):
+        if client.addr[0] != '127.0.0.1':
+            client.sock.send(ErrorMessage(message='Not allowed to set redirect from another machine!').encode())
+            return
+
+        id = msg[ServerRegisterModHTTPLink.KEY_ID]
+        url = msg[ServerRegisterModHTTPLink.KEY_LINK]
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.128 Safari/537.36'}
+        r = requests.get(url, headers, allow_redirects=True)
+        if r.status_code >= 400:
+            msg = '[ER] Download attempt returned error code {}'.format(r.status_code)
+            print(msg)
+            client.send(ErrorMessage(message=msg).encode())
+            return
+        try:
+            with open('tmp.jar', 'wb') as file:
+                file.write(r.content)
+            dl_mod = ModInfo('tmp.jar').to_dict()
+            mod = self.modcache[id].to_dict()
+
+            for k in mod:
+                if dl_mod[k] != mod[k]:
+                    msg = 'Invalid file: Downloaded file {} doesnt match listed mod: {} != {}'.format(k, dl_mod[k], mod[k])
+                    client.send(ErrorMessage(code=ServerRegisterModHTTPLink.ERROR_CODE_INVALID_FILE,
+                                             message=msg).encode())
+                    # raise ValueError(msg)
+                    return
+
+            self._set_mod_redirect(self.modcache[id], url)
+        except:
+            raise
+        finally:
+            remove('tmp.jar')
 
     def _handle_unknown(self, client: ClientHandler, msg: Message):
         print('[ER] Unknown message type: {}'.format(msg.type))
@@ -456,9 +550,8 @@ class ServerSyncServer:
 
             server.modcache_lock.release()
 
-            server.modlist_updater_thread = None
-
             if repeat_after is None:
+                server.modlist_updater_thread = None
                 break
 
             sleep(repeat_after)

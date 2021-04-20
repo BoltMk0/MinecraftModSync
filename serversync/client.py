@@ -5,6 +5,8 @@ from socket import socket, AF_INET, SOCK_STREAM, error, gaierror, timeout
 from os import remove
 import sys
 from time import sleep
+import requests
+import atexit
 
 from threading import Thread
 
@@ -12,12 +14,27 @@ from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QMess
     QListWidgetItem, QCheckBox, QScrollBar, QVBoxLayout, QScrollArea, QHBoxLayout, QTableWidget
 from PyQt5.Qt import Qt, QObject, pyqtSignal, QThread, QFont
 
+_currently_downloading = None
+
+
+def _cleanup():
+    global _currently_downloading
+    if _currently_downloading is not None:
+        remove(_currently_downloading)
+        print('[OK] Removed partial downloaded file: {}'.format(_currently_downloading))
+
+
+atexit.register(_cleanup)
+
 
 class Client:
-    def __init__(self):
+    def __init__(self, sock_timeout=5):
+        self._sock_timeout = sock_timeout
         self.conf = ServerSyncConfig()
         self.on_progress_cb = None
         self.sock = None
+
+        self._currently_downloading = None  # When None, not downloading, else the filepath
 
     def connect(self, ip=None, port=None):
         if self.sock is not None:
@@ -34,6 +51,12 @@ class Client:
             if self.get_server_ver() == 'legacy':
                 raise UnsupportedServerError('This client version does not support legacy servers. Either downgrade '
                                              'serversync to legacy (0.x) version, or contact your server administrator.')
+
+            # Inform server whether or not this client allows redirects
+            msg = PingMessage()
+            msg[PingMessage.KEY_SUPPORTS_HTTP_REDIRECT] = self.conf.allow_redirects
+            self.send(msg)
+
         except:
             self.sock.close()
             raise
@@ -45,7 +68,7 @@ class Client:
 
     def _make_sock(self):
         sock = socket(AF_INET, SOCK_STREAM)
-        sock.settimeout(1)
+        sock.settimeout(self._sock_timeout)
         sock.connect(self.conf.server_address)
         return sock
 
@@ -117,6 +140,7 @@ class Client:
         return ret[GetResponse.KEY_MOD_DATA]
 
     def download_file(self, modid, output_dirpath):
+        global _currently_downloading
         info = self.get_mod_info(modid)
         output_filepath = path.join(output_dirpath, info['filename'])
         if path.exists(output_filepath):
@@ -129,61 +153,69 @@ class Client:
         if modsize == 0:
             raise ValueError('Modsize cannot be 0')
         try:
+            _currently_downloading = output_filepath
             with open(output_filepath, 'wb') as file:
-
                 self.sock.send(DownloadRequest(modid).encode())
                 buf = bytearray(DOWNLOAD_BUFFER_SIZE)
 
                 attempt_counter = 0
                 first_buffer = True
                 while bytes_remaining > 0:
-                    try:
-                        nbytes = self.sock.recv_into(buf, DOWNLOAD_BUFFER_SIZE)
-                        if nbytes == 0:
-                            if bytes_remaining > 0:
-                                if attempt_counter == 3:
-                                    raise IncompleteDownloadError('Incomplete download! Expected {} bytes, got {}.'.format(modsize, bytes_read))
-                                attempt_counter += 1
-                                sleep(0.1)
-                        else:
-                            # Check for response message instead of regular download (in case of error)
-                            if first_buffer:
-                                first_buffer = False
-                                if buf.startswith(b'{'):
-                                    # Response message from server instead
-                                    data = buf[:nbytes]
+                    nbytes = self.sock.recv_into(buf, DOWNLOAD_BUFFER_SIZE)
+                    if nbytes == 0:
+                        if bytes_remaining > 0:
+                            if attempt_counter == 3:
+                                raise IncompleteDownloadError('Incomplete download! Expected {} bytes, got {}.'.format(modsize, bytes_read))
+                            attempt_counter += 1
+                            sleep(0.1)
+                    else:
+                        # Check for response message instead of regular download (in case of error)
+                        if first_buffer:
+                            first_buffer = False
+                            if buf.startswith(b'{'):
+                                # Response message from server instead
+                                data = buf[:nbytes]
 
-                                    # Handle big messages (future-proofing)
-                                    if not data.endswith(bytes(1)):
-                                        try:
-                                            while True:
-                                                b = self.sock.recv(DOWNLOAD_BUFFER_SIZE)
-                                                if len(b) == 0:
-                                                    break
-                                                if data.endswith(bytes(1)):
-                                                    break
-                                        except timeout:
-                                            raise ServerSyncError('Unexpected termination of server during message parsing. Last received data: {}'.format(data))
+                                # Handle big messages (future-proofing)
+                                if not data.endswith(bytes(1)):
+                                    try:
+                                        while True:
+                                            b = self.sock.recv(DOWNLOAD_BUFFER_SIZE)
+                                            if len(b) == 0:
+                                                break
+                                            data += b
+                                            if data.endswith(bytes(1)):
+                                                break
+                                    except timeout:
+                                        raise ServerSyncError('Unexpected termination of server during message parsing. Last received data: {}'.format(data))
 
-                                    msg = Message.decode(data)
+                                msg = Message.decode(data)
+                                if msg.type == RedirectMessage.TYPE_STR:
+                                    url = msg[RedirectMessage.KEY_LINK]
+                                    print('[OK] Received redirect isntruction from server: {}'.format(url))
+                                    with requests.get(url) as req:
+                                        req.raise_for_status()
+                                        for chunk in req.iter_content(chunk_size=8192):
+                                            nbytes = len(chunk)
+                                            bytes_read += nbytes
+                                            bytes_remaining -= nbytes
+                                            file.write(chunk)
+                                            self.on_progress_cb(bytes_read, modsize)
+                                    break
+                                else:
                                     raise ServerSyncError('Received message from server: {}'.format(msg))
 
-                            attempt_counter = 0
-                            file.write(buf[:nbytes])
-                            bytes_read += nbytes
-                            bytes_remaining -= nbytes
-                            if self.on_progress_cb is not None:
-                                self.on_progress_cb(bytes_read, modsize)
-                    except ServerSyncError:
-                        raise
-                    except error:
-                        break
-                    except:
-                        break
-
-        except IncompleteDownloadError:
+                        attempt_counter = 0
+                        file.write(buf[:nbytes])
+                        bytes_read += nbytes
+                        bytes_remaining -= nbytes
+                        if self.on_progress_cb is not None:
+                            self.on_progress_cb(bytes_read, modsize)
+        except:
             remove(output_filepath)
             raise
+        finally:
+            _currently_downloading = None
 
 
 class ClientGUI(QWidget):
@@ -337,6 +369,10 @@ class ClientGUI(QWidget):
             self.conf.save()        # Create config file
             self._show_settings()
 
+    def close(self) -> bool:
+
+        return super().close()
+
     @property
     def conf(self):
         return self.client.conf
@@ -465,13 +501,18 @@ class ClientGUI(QWidget):
         except UnsupportedServerError as e:
             self.on_show_message_box('Unsupported server', str(e), False)
             return
+        except timeout as e2:
+            self.on_show_message_box('Server Timeout', str(e2), False)
+            return
+        except ConnectionRefusedError as e3:
+            self.on_show_message_box('Connection Refused', 'Could not establish connection with server\n{}'.format(e3), False)
+            return
 
         if self._scanner_running:
             # Cancel scan
             self.modloader.cancelScanSignal.emit()
         else:
             self.modlist_widget.clear_table()
-
 
             # self.rescan_btn.setEnabled(False)
             self.rescan_btn.setText('Cancel')
@@ -490,10 +531,11 @@ class ClientGUI(QWidget):
                 self.modloader.progress.connect(self.report_progress)
                 self.thread.start()
                 self._scanner_running = True
-            except ConnectionRefusedError as e:
+
+            except (ConnectionRefusedError, timeout) as e:
                 self.rescan_btn.setText('Re-Scan')
                 self.rescan_btn.setEnabled(True)
-                self.on_show_message_box('Unable to connect to server', 'Unable to connect to server at {}:{}\n{}'.format(client.conf.server_ip, client.conf.server_port, e), False)
+                self.on_show_message_box('Unable to connect to server', 'Unable to connect to server at {}:{}\n{}'.format(self.client.conf.server_ip, self.client.conf.server_port, e), False)
 
     def report_progress(self, prog):
         self.upper_text.setText('Scanning... {}%'.format(prog))
@@ -523,15 +565,28 @@ class ModDownloader(QObject):
     def run(self) -> None:
         client = Client()
         client.on_progress_cb = self._on_progress_2
+        issue_with_redirects = False
         for mod_id in self.mod_ids:
             self.cur_id = mod_id
             try:
                 client.download_file(mod_id, '.')
+
             except error as e:
-                self.onErrorSignal.emit('Failed to connect to server', 'Failed to connect to server at {}:{}\n {}'.format(
-                    client.conf.server_ip, client.conf.server_port, e), False)
-                self.finished.emit(True)
-                return
+                if client.conf.allow_redirects:
+                    client.conf.allow_redirects = False
+                    client.conf.save()
+                    self.onErrorSignal.emit('WARNING: Potential bad HTTP redirects',
+                                            'The server attempted to use bad HTTP redirects to speed up the download '
+                                            'process. Serversync will disable redirects (this can be re-enabled from '
+                                            'the settings)\nPlease re-scan and try again.', False)
+                    self.finished.emit(True)
+                    return
+                else:
+                    self.onErrorSignal.emit('Failed to connect to server',
+                                            'Failed to connect to server at {}:{}\n {}'.format(
+                                                client.conf.server_ip, client.conf.server_port, e), False)
+                    self.finished.emit(True)
+                    return
             except ValueError as e:
                 self.onErrorSignal.emit('Download Error', str(e), False)
                 self.finished.emit(True)
@@ -540,14 +595,10 @@ class ModDownloader(QObject):
                 self.onErrorSignal.emit('Unknown Error', str(e), True)
                 self.finished.emit(True)
                 return
-
         self.finished.emit(False)
 
     def _on_progress_2(self, cur, total):
-        self._on_progress(int(100*cur/total))
-
-    def _on_progress(self, prog):
-        self.progress.emit(self.cur_id, prog)
+        self.progress.emit(self.cur_id, int(100*cur/total))
 
 
 class ModLoader(QObject):

@@ -12,6 +12,7 @@ CONFIG_FILENAME = 'serversync.conf'
 
 CONF_KEY_KNOWN_CLIENT_SIDE_MODS = 'known_client_side_mods'
 CONF_KEY_KNOWN_SERVER_SIDE_MODS = 'known_server_side_mods'
+CONF_KEY_ALLOW_REDIRECTS = 'allow_redirects'
 
 
 class ServerSyncError(Exception):
@@ -67,7 +68,7 @@ def parse_jar_manifest(data: str):
 
 class ModInfo:
     def __init__(self, filepath):
-        self.filepath = filepath
+        self.filepath = path.abspath(filepath)
         if not path.exists(filepath):
             raise FileNotFoundError(filepath)
         if not zipfile.is_zipfile(filepath):
@@ -113,13 +114,17 @@ class ModInfo:
     def id(self):
         return self.config['modId']
 
+    @property
+    def size(self):
+        return path.getsize(self.filepath)
+
     def to_dict(self):
         return {
             'name': self.name,
             'id': self.id,
             'version': self.version,
             'filename': path.basename(self.filepath),
-            'size': path.getsize(self.filepath)
+            'size': self.size
         }
 
 
@@ -153,6 +158,16 @@ class ServerSyncConfig(dict):
         if self.server_ip is None:
             raise ValueError('No IP has been set')
         return self.server_ip, self.server_port
+
+    @property
+    def allow_redirects(self):
+        if CONF_KEY_ALLOW_REDIRECTS not in self:
+            self[CONF_KEY_ALLOW_REDIRECTS] = True
+        return self[CONF_KEY_ALLOW_REDIRECTS]
+
+    @allow_redirects.setter
+    def allow_redirects(self, allow: bool):
+        self[CONF_KEY_ALLOW_REDIRECTS] = allow
 
     def save(self):
         with open(self.filepath, 'w') as file:
@@ -392,6 +407,7 @@ class SetProfileRequest(Message):
 class PingMessage(Message):
     TYPE_STR = 'ping'
     KEY_VERSION = 'version'
+    KEY_SUPPORTS_HTTP_REDIRECT = 'redirect_support'
 
     def __init__(self):
         super().__init__()
@@ -408,6 +424,32 @@ class ServerRefreshRequest(Message):
 
 class ServerStopRequest(Message):
     TYPE_STR = 'stop'
+
+
+class ServerRegisterModHTTPLink(Message):
+    TYPE_STR = 'link'
+    KEY_LINK = 'href'
+    KEY_ID = 'id'
+    KEY_VERSION = 'version'
+    ERROR_CODE_INVALID_LINK = 701
+    ERROR_CODE_INVALID_FILE = 702
+
+    def __init__(self, mod_id=None, mod_version=None, hyperlink=None):
+        super().__init__()
+        self[self.KEY_ID] = mod_id
+        self[self.KEY_LINK] = hyperlink
+        self[self.KEY_VERSION] = mod_version
+
+
+class RedirectMessage(Message):
+    TYPE_STR = 'redirect'
+    KEY_LINK = ServerRegisterModHTTPLink.KEY_LINK
+    KEY_ID = ServerRegisterModHTTPLink.KEY_ID
+
+    def __init__(self, modid=None, href=None):
+        super().__init__()
+        self[self.KEY_ID] = modid
+        self[self.KEY_LINK] = href
 
 
 messageTypeToConstructor = {ErrorMessage.TYPE_STR: ErrorMessage,
