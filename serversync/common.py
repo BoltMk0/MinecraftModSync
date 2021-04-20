@@ -425,26 +425,10 @@ class ServerRefreshRequest(Message):
 class ServerStopRequest(Message):
     TYPE_STR = 'stop'
 
-
-class ServerRegisterModHTTPLink(Message):
-    TYPE_STR = 'link'
-    KEY_LINK = 'href'
-    KEY_ID = 'id'
-    KEY_VERSION = 'version'
-    ERROR_CODE_INVALID_LINK = 701
-    ERROR_CODE_INVALID_FILE = 702
-
-    def __init__(self, mod_id=None, mod_version=None, hyperlink=None):
-        super().__init__()
-        self[self.KEY_ID] = mod_id
-        self[self.KEY_LINK] = hyperlink
-        self[self.KEY_VERSION] = mod_version
-
-
 class RedirectMessage(Message):
     TYPE_STR = 'redirect'
-    KEY_LINK = ServerRegisterModHTTPLink.KEY_LINK
-    KEY_ID = ServerRegisterModHTTPLink.KEY_ID
+    KEY_LINK = 'link'
+    KEY_ID = 'id'
 
     def __init__(self, modid=None, href=None):
         super().__init__()

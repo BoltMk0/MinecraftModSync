@@ -211,7 +211,8 @@ class ServerSyncServer():
                 print('[ER] HTTP get attempt failed: {}.\n{}\nDisabling http server.'.format(test_url, e))
                 self.http_server = None
 
-    def public_ip(self):
+    @staticmethod
+    def public_ip():
         return requests.get('https://api.ipify.org').text
 
     @property
@@ -258,7 +259,7 @@ class ServerSyncServer():
                     except FileNotFoundError as e:
                         print('[ER] {}'.format(str(e)))
                         del self.modcache[mid]
-                        print('WARNING: Mod with id {} removed Resolved. Removed {} from modlist'.format(mid))
+                        print('WARNING: Mod with id {} removed Resolved. Removed from modlist'.format(mid))
 
                 client.send(json.dumps({'required':required,
                                         'optional': self.client_side_mod_ids,
@@ -397,40 +398,6 @@ class ServerSyncServer():
             # Directly send success message before closing
             client.sock.send(SuccessMessage().encode())
         client.sock.send(ErrorMessage(message='Not allowed to close server from another machine!').encode())
-
-    def _handle_mod_http_link(self, client: ClientHandler, msg: Message):
-        if client.addr[0] != '127.0.0.1':
-            client.sock.send(ErrorMessage(message='Not allowed to set redirect from another machine!').encode())
-            return
-
-        id = msg[ServerRegisterModHTTPLink.KEY_ID]
-        url = msg[ServerRegisterModHTTPLink.KEY_LINK]
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.128 Safari/537.36'}
-        r = requests.get(url, headers, allow_redirects=True)
-        if r.status_code >= 400:
-            msg = '[ER] Download attempt returned error code {}'.format(r.status_code)
-            print(msg)
-            client.send(ErrorMessage(message=msg).encode())
-            return
-        try:
-            with open('tmp.jar', 'wb') as file:
-                file.write(r.content)
-            dl_mod = ModInfo('tmp.jar').to_dict()
-            mod = self.modcache[id].to_dict()
-
-            for k in mod:
-                if dl_mod[k] != mod[k]:
-                    msg = 'Invalid file: Downloaded file {} doesnt match listed mod: {} != {}'.format(k, dl_mod[k], mod[k])
-                    client.send(ErrorMessage(code=ServerRegisterModHTTPLink.ERROR_CODE_INVALID_FILE,
-                                             message=msg).encode())
-                    # raise ValueError(msg)
-                    return
-
-            self._set_mod_redirect(self.modcache[id], url)
-        except:
-            raise
-        finally:
-            remove('tmp.jar')
 
     def _handle_unknown(self, client: ClientHandler, msg: Message):
         print('[ER] Unknown message type: {}'.format(msg.type))
