@@ -187,6 +187,20 @@ class ServerSyncServer():
                 else:
                     return abort(500)
 
+            @self.http_server.route('/conf')
+            def get_conf():
+                return json.dumps({k: self.conf[k] for k in self.conf if k not in ['passkey']}, indent=4)
+
+            @self.http_server.route('/list')
+            def get_list():
+                if self.modcache_lock.acquire(True, 10):
+                    try:
+                        return json.dumps([self.modcache[mid].to_dict() for mid in self.modcache], indent=4)
+                    except:
+                        raise
+                    finally:
+                        self.modcache_lock.release()
+
             self.http_server_thread.start()
 
     @property
