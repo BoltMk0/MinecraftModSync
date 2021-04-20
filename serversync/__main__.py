@@ -2,6 +2,7 @@ import argparse
 from serversync.server import *
 from serversync import VERSION
 import sys
+from os import chdir
 
 
 def exit_after_1(code=0):
@@ -32,23 +33,13 @@ if __name__ == '__main__':
     ap.add_argument('--port', '-p', action='store', type=int, help='Server port')
     ap.add_argument('--passkey', action='store', type=str, help='Server passkey (used for setting client profile)')
     ap.add_argument('--hostname', '-ip', action='store', type=str, help='Server ip address/hostname')
-    ap.add_argument('--set-mod-redirect', '-href', action='store', nargs=2, type=str, metavar=('<mod_filepath>', '<href>'), help='Set redirect url for mod')
 
     pargs, unknown = ap.parse_known_args(sys.argv[1:])
 
-    if pargs.set_mod_redirect is not None:
-        mod = ModInfo(pargs.set_mod_redirect[0])
-        href = pargs.set_mod_redirect[1]
-        try:
-            cli = Client()
-            ret = cli.send(ServerRegisterModHTTPLink(mod.id, mod.version, href))
-            if ret.type == ErrorMessage.TYPE_STR:
-                print('[ER] Server responded with an error message (Code {}): {}'.format(ret[ErrorMessage.KEY_CODE], ret[ErrorMessage.KEY_MESSAGE]), file=sys.stderr)
-                exit(ret[ErrorMessage.KEY_CODE])
-        except timeout:
-            print('[ER] Socket timed out when connecting to server', file=sys.stderr)
-            exit(-1)
-    elif pargs.mode == 'DEFAULT':
+    if 'mods' in listdir() and path.isdir('mods'):
+        chdir('mods')
+
+    if pargs.mode == 'DEFAULT':
         app = QApplication(sys.argv)
         ex = ClientGUI()
         sys.exit(app.exec_())
