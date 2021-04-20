@@ -9,7 +9,8 @@ import requests
 from flask import Flask, send_file, abort
 
 
-HTTP_SERVER_PORT = 25568
+DEFAULT_HTTP_SERVER_PORT = 25568
+CONF_KEY_HTTP_SERVER_PORT = 'http_server_port'
 CONF_KEY_REDIRECT_MIN_MODSIZE = 'redirect_min_modsize'
 DEFAULT_REDIRECT_MIN_MODSIZE = 1048576
 
@@ -172,7 +173,7 @@ class ServerSyncServer():
                 self.conf.save()
 
             self.http_server = Flask(__name__)
-            self.http_server_thread = Thread(target=self.http_server.run, args=('0.0.0.0', HTTP_SERVER_PORT))
+            self.http_server_thread = Thread(target=self.http_server.run, args=('0.0.0.0', self.http_server_port))
 
             @self.http_server.route('/download/<filename>')
             def handle_mod_download(filename):
@@ -202,6 +203,23 @@ class ServerSyncServer():
                         self.modcache_lock.release()
 
             self.http_server_thread.start()
+            test_url = 'http://{}:{}/conf'.format(self.public_ip(), self.http_server_port)
+            try:
+                requests.get(test_url)
+                print('[OK] Confirmed HTTP server is running and reachable.')
+            except Exception as e:
+                print('[ER] HTTP get attempt failed: {}.\n{}\nDisabling http server.'.format(test_url, e))
+                self.http_server = None
+
+    def public_ip(self):
+        return requests.get('https://api.ipify.org').text
+
+    @property
+    def http_server_port(self):
+        if CONF_KEY_HTTP_SERVER_PORT not in self.conf:
+            self.conf[CONF_KEY_HTTP_SERVER_PORT] = DEFAULT_HTTP_SERVER_PORT
+            self.conf.save()
+        return self.conf[CONF_KEY_HTTP_SERVER_PORT]
 
     @property
     def client_side_mod_ids(self):
@@ -307,9 +325,9 @@ class ServerSyncServer():
             redirect_size = self.conf[CONF_KEY_REDIRECT_MIN_MODSIZE]
             if client.redirect_supported and self.http_server is not None and \
                     redirect_size < mod.size:
-                public_ip = requests.get('https://api.ipify.org').text
+                public_ip = self.public_ip()
                 mod_filename = path.basename(mod.filepath)
-                url = 'http://{}:{}/download/{}'.format(public_ip, HTTP_SERVER_PORT, mod_filename)
+                url = 'http://{}:{}/download/{}'.format(public_ip, self.http_server_port, mod_filename)
                 client.send(RedirectMessage(mod.id, url).encode())
                 print('[OK] Redirected client to {}'.format(url))
             else:
