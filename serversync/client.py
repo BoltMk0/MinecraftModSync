@@ -94,39 +94,36 @@ class Client:
         if self.sock is None:
             self.connect()
 
-        try:
-            to_write = len(data)
-            while to_write > 0:
-                if to_write > DOWNLOAD_BUFFER_SIZE:
-                    nbytes = self.sock.send(data[-to_write:DOWNLOAD_BUFFER_SIZE-to_write])
+        to_write = len(data)
+        while to_write > 0:
+            if to_write > DOWNLOAD_BUFFER_SIZE:
+                nbytes = self.sock.send(data[-to_write:DOWNLOAD_BUFFER_SIZE-to_write])
+            else:
+                nbytes = self.sock.send(data[-to_write:])
+            to_write -= nbytes
+
+        ret = b''
+        buf = bytearray(DOWNLOAD_BUFFER_SIZE)
+        retry_counter = 0
+        while True:
+            nbytes = self.sock.recv_into(buf)
+            if nbytes == 0:
+                # All messages are terminated with a null byte.
+                if ret.endswith(bytes(1)):
+                    break
                 else:
-                    nbytes = self.sock.send(data[-to_write:])
-                to_write -= nbytes
-
-            ret = b''
-            buf = bytearray(DOWNLOAD_BUFFER_SIZE)
-            retry_counter = 0
-            while True:
-                nbytes = self.sock.recv_into(buf)
-                if nbytes == 0:
-                    # All messages are terminated with a null byte.
-                    if ret.endswith(bytes(1)):
+                    if retry_counter == 10*self._sock_timeout:
                         break
-                    else:
-                        if retry_counter == 10*self._sock_timeout:
-                            break
-                        retry_counter += 1
-                        sleep(0.1)
-                else:
-                    retry_counter = 0
-                    ret += buf[:nbytes]
-                    if ret[-1] == 0:
-                        break
+                    retry_counter += 1
+                    sleep(0.1)
+            else:
+                retry_counter = 0
+                ret += buf[:nbytes]
+                if ret[-1] == 0:
+                    break
 
-            return ret
+        return ret
 
-        except:
-            raise
 
     def get_server_mod_list(self):
         return self.send(ListRequest())
@@ -504,7 +501,7 @@ class ClientGUI(QWidget):
         except timeout as e2:
             self.on_show_message_box('Server Timeout', str(e2), False)
             return
-        except ConnectionRefusedError as e3:
+        except (ConnectionRefusedError, ConnectionAbortedError) as e3:
             self.on_show_message_box('Connection Refused', 'Could not establish connection with server\n{}'.format(e3), False)
             return
 

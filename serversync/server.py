@@ -96,7 +96,7 @@ class ServerSyncServer():
             else:
                 self.redirect_supported = False
 
-            print('[OK] Client Info updated: Address: {} | Version {} | Allows redirects: {}'.format(self.addr, msg[PingMessage.KEY_VERSION], self.redirect_supported))
+            print('[OK] Client Info updated: Address: {} | Version {}.{} | Allows redirects: {}'.format(self.addr, self.version_major, self.version_minor, self.redirect_supported))
 
         def ingest(self, buf: bytearray, nbytes: int):
             self.input_buffer += buf[:nbytes]

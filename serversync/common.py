@@ -232,6 +232,8 @@ def version_numbers_from_version_string(ver_str: str):
             tmp = parts[1].split('b')
             minor = int(tmp[0])
             build = int(tmp[1])
+        else:
+            minor = int(parts[1])
 
     elif 'b' in ver_str:
         parts = ver_str.split('b')
