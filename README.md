@@ -47,6 +47,8 @@ the installer adds Python to the system environment variables!
 - cd into your server mods folder, then run `python -m serversync --server`
 - Forward TCP traffic for the selected port (default 25567) to your machine from your router.
 You can change this using the '--port <int>' argument when running the server. 
+- (New from 1.3) Forward TCP traffic to selected HTTP server port (default 25568) to machine.
+This can be changed from the serversync.conf file
 
 ##### Determining server-side and client-side mods
 The server uses a "Client Profile" to determine which mods are server-side, and which are
