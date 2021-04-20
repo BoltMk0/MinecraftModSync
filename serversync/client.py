@@ -113,7 +113,7 @@ class Client:
                     if ret.endswith(bytes(1)):
                         break
                     else:
-                        if retry_counter == 10:
+                        if retry_counter == 10*self._sock_timeout:
                             break
                         retry_counter += 1
                         sleep(0.1)
@@ -565,7 +565,6 @@ class ModDownloader(QObject):
     def run(self) -> None:
         client = Client()
         client.on_progress_cb = self._on_progress_2
-        issue_with_redirects = False
         for mod_id in self.mod_ids:
             self.cur_id = mod_id
             try:
@@ -575,18 +574,16 @@ class ModDownloader(QObject):
                 if client.conf.allow_redirects:
                     client.conf.allow_redirects = False
                     client.conf.save()
-                    self.onErrorSignal.emit('WARNING: Potential bad HTTP redirects',
+                    self.onErrorSignal.emit('WARNING: Potential bad HTTP redirects?',
                                             'The server attempted to use bad HTTP redirects to speed up the download '
-                                            'process. Serversync will disable redirects (this can be re-enabled from '
+                                            'process. Consider disabling HTTP redirects (this can be done from '
                                             'the settings)\nPlease re-scan and try again.', False)
-                    self.finished.emit(True)
-                    return
                 else:
                     self.onErrorSignal.emit('Failed to connect to server',
                                             'Failed to connect to server at {}:{}\n {}'.format(
                                                 client.conf.server_ip, client.conf.server_port, e), False)
-                    self.finished.emit(True)
-                    return
+                self.finished.emit(True)
+                return
             except ValueError as e:
                 self.onErrorSignal.emit('Download Error', str(e), False)
                 self.finished.emit(True)
