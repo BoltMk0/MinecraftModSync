@@ -166,50 +166,6 @@ class ServerSyncServer():
         self.http_server = None
         self.http_server_thread = None
 
-        if self.conf.allow_redirects:
-            if CONF_KEY_REDIRECT_MIN_MODSIZE not in self.conf:
-                self.conf[CONF_KEY_REDIRECT_MIN_MODSIZE] = DEFAULT_REDIRECT_MIN_MODSIZE
-                self.conf.save()
-
-            self.http_server = Flask(__name__)
-            self.http_server_thread = Thread(target=self.http_server.run, args=('0.0.0.0', self.http_server_port))
-
-            @self.http_server.route('/download/<filename>')
-            def handle_mod_download(filename):
-                if self.modcache_lock.acquire(True, 5):
-                    try:
-                        mod = self.modcache.from_filename(filename)
-                        return send_file(mod.filepath)
-                    except Exception as e:
-                        return abort(404)
-                    finally:
-                        self.modcache_lock.release()
-                else:
-                    return abort(500)
-
-            @self.http_server.route('/conf')
-            def get_conf():
-                return json.dumps({k: self.conf[k] for k in self.conf if k not in ['passkey']}, indent=4)
-
-            @self.http_server.route('/list')
-            def get_list():
-                if self.modcache_lock.acquire(True, 10):
-                    try:
-                        return json.dumps([self.modcache[mid].to_dict() for mid in self.modcache], indent=4)
-                    except:
-                        raise
-                    finally:
-                        self.modcache_lock.release()
-
-            self.http_server_thread.start()
-            test_url = 'http://{}:{}/conf'.format(self.public_ip(), self.http_server_port)
-            try:
-                requests.get(test_url)
-                print('[OK] Confirmed HTTP server is running and reachable.')
-            except Exception as e:
-                print('[ER] HTTP get attempt failed: {}.\n{}\nDisabling http server.'.format(test_url, e))
-                self.http_server = None
-
     @staticmethod
     def public_ip():
         return requests.get('https://api.ipify.org').text
@@ -253,6 +209,8 @@ class ServerSyncServer():
                 print('Handling list request')
                 required = {}
                 for mid in self.modcache:
+                    if mid in self.server_side_mod_ids:
+                        continue
                     try:
                         required[mid] = self.modcache[mid].to_dict()
                     except FileNotFoundError as e:
@@ -455,6 +413,51 @@ class ServerSyncServer():
         try:
             self.server_sock.bind(('', self.conf.server_port))
             print('[OK]')
+
+            if self.conf.allow_redirects:
+                print('Starting HTTP redirect server... ')
+                if CONF_KEY_REDIRECT_MIN_MODSIZE not in self.conf:
+                    self.conf[CONF_KEY_REDIRECT_MIN_MODSIZE] = DEFAULT_REDIRECT_MIN_MODSIZE
+                    self.conf.save()
+
+                self.http_server = Flask(__name__)
+                self.http_server_thread = Thread(target=self.http_server.run, args=('0.0.0.0', self.http_server_port))
+
+                @self.http_server.route('/download/<filename>')
+                def handle_mod_download(filename):
+                    if self.modcache_lock.acquire(True, 5):
+                        try:
+                            mod = self.modcache.from_filename(filename)
+                            return send_file(mod.filepath)
+                        except Exception as e:
+                            return abort(404)
+                        finally:
+                            self.modcache_lock.release()
+                    else:
+                        return abort(500)
+
+                @self.http_server.route('/conf')
+                def get_conf():
+                    return json.dumps({k: self.conf[k] for k in self.conf if k not in ['passkey']}, indent=4)
+
+                @self.http_server.route('/list')
+                def get_list():
+                    if self.modcache_lock.acquire(True, 10):
+                        try:
+                            return json.dumps([self.modcache[mid].to_dict() for mid in self.modcache], indent=4)
+                        except:
+                            raise
+                        finally:
+                            self.modcache_lock.release()
+
+                self.http_server_thread.start()
+                test_url = 'http://{}:{}/conf'.format(self.public_ip(), self.http_server_port)
+                try:
+                    requests.get(test_url)
+                    print('[OK] Confirmed HTTP server is running and reachable.')
+                except Exception as e:
+                    print('[ER] HTTP get attempt failed: {}.\n{}\nDisabling http server.'.format(test_url, e))
+                    self.http_server = None
 
             self.server_sock.listen(5)
             self.server_sock.settimeout(60)
