@@ -218,8 +218,8 @@ def print_progress(prog):
 
 
 def version_numbers_from_version_string(ver_str: str):
-    major = None
-    minor = None
+    major = -1
+    minor = -1
     build = None
 
     if '.' in ver_str:

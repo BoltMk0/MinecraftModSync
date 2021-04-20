@@ -146,8 +146,7 @@ class ServerSyncServer():
             DownloadRequest.TYPE_STR: self._handle_download,
             SetProfileRequest.TYPE_STR: self._handle_set_profile,
             ServerRefreshRequest.TYPE_STR: self._handle_refresh_request,
-            ServerStopRequest.TYPE_STR: self._handle_stop_request,
-            ServerRegisterModHTTPLink.TYPE_STR: self._handle_mod_http_link
+            ServerStopRequest.TYPE_STR: self._handle_stop_request
         }
 
         self.modcache = self.ModCache()

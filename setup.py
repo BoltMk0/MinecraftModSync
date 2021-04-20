@@ -16,7 +16,7 @@ setuptools.setup(
     long_description=read('README.md'),
     python_requires='!=3.9.*, >=3',
     version=VERSION,
-    install_requires=['toml', 'PyQt5', 'flask'],
+    install_requires=['toml', 'PyQt5', 'flask', 'requests'],
     packages=setuptools.find_packages(),
     entry_points={
         'console_scripts': ['ServerSyncSettings=serversync.config_gui:config_editor_session']
