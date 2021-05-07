@@ -19,34 +19,36 @@ Currently only supports Forge mods.
 ## Getting Started
 
 #### Manual Installation Instructions (Client/User)
-
-NOTE: ServerSync requires python 3.8.x (Does not work on 3.9.x yet). If you don't already have it,
-[Download Python 3.8.9](https://www.python.org/ftp/python/3.8.9/python-3.8.9-amd64.exe) and be sure
-the installer adds Python to the system environment variables!
-
+- ServerSync requires python 3.8.x or lower (Does not work on 3.9.x yet). If you don't already have it,[Download Python 3.8.9](https://www.python.org/ftp/python/3.8.9/python-3.8.9-amd64.exe) and __be sure the installer adds Python to the system environment variables!__
 - [Download the latest release of ServerSync][release]
 - **Install ServerSync using pip**
     - Open a command prompt window (Search for "Command Prompt" in start menu)
     - Type "python -m pip install " then drag and drop the .whl file into the cmd window.
     The command should look something like:
-    
         `python -m pip install "C:\Users\<user>\Downloads\serversync-0.3-py3-none-any.whl"`
 - **Install commands to the context (right click) menu**
     - Open a Command Prompt window **as administrator** (Search for "Command Prompt" in start menu, right click and select "Run as Administrator")
     - Run `python -m serversync --install`, and enter "1" when prompted.
 
-    Done! Now you have access to serversync from any folder by right-clicking and selecting "Run ServerSync". 
-    
-    *Tip: Serversync stores unique configurations for each folder you use it from (i.e. each mod folder 
-    you have can sync to a different server).*
+Done! Now you have access to serversync from any folder by right-clicking and selecting "Run ServerSync". 
+
+*Tip: Serversync stores unique configurations for each folder you use it from (i.e. each mod folder 
+you have can sync to a different server).*
 
 #### Installation Instructions (Server/Administrator)
+- **Linux**
+    - Install python and pip: `apt install python3 python3-pip`
+    - Update pip: `pip3 install --upgrade pip`
+- **Windows**
+    - ServerSync requires python 3.8.x or lower (Does not work on 3.9.x yet). If you don't already have it,[Download Python 3.8.9](https://www.python.org/ftp/python/3.8.9/python-3.8.9-amd64.exe) and __be sure the installer adds Python to the system environment variables!__
 - [Download the latest release of ServerSync][release]
 - Open a Command Prompt window / terminal
 - Install the serversync module using `python -m pip install <path-to-serversync-module>.whl`
+    - Linux users: Note you may have to replace "python" with "python3".
 - cd into your server mods folder, then run `python -m serversync --server`
-- Forward TCP traffic for the selected port (default 25567) to your machine from your router.
-You can change this using the '--port <int>' argument when running the server. 
+    - Linux users: see above note.
+- Log into your internet router (instructions will be on the back of the router) and forward TCP traffic for the selected port (default 25567) to your machine from your router.
+NOTE: You can change the port used by serversync using the '--port <int>' argument when running the server. 
 - (New from 1.3) Forward TCP traffic to selected HTTP server port (default 25568) to machine.
 This can be changed from the serversync.conf file
 
