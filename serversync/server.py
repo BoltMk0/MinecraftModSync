@@ -1,9 +1,9 @@
 from serversync.client import *
 from time import sleep
-from socket import timeout
+from socket import timeout, socket
 import select
 from threading import Thread, Lock, ThreadError
-from os import makedirs
+from os import makedirs, path
 from shutil import rmtree, copy
 import requests
 from flask import Flask, send_file, abort
@@ -79,6 +79,7 @@ class ServerSyncServer():
             self.addr = addr
             self.version_major = -1
             self.version_minor = -1
+            self.build_no = None
             self.input_buffer = bytes()
             self.output_buffer = bytes()
             self.redirect_supported = False
@@ -89,14 +90,16 @@ class ServerSyncServer():
 
         def update_client_data_from_ping(self, msg: Message):
             if PingMessage.KEY_VERSION in msg:
-                self.version_major, self.version_minor, build = version_numbers_from_version_string(msg[PingMessage.KEY_VERSION])
+                self.version_major, self.version_minor, self.build_no = version_numbers_from_version_string(msg[PingMessage.KEY_VERSION])
 
             if PingMessage.KEY_SUPPORTS_HTTP_REDIRECT in msg:
                 self.redirect_supported = msg[PingMessage.KEY_SUPPORTS_HTTP_REDIRECT]
             else:
                 self.redirect_supported = False
 
-            print('[OK] Client Info updated: Address: {} | Version {}.{} | Allows redirects: {}'.format(self.addr, self.version_major, self.version_minor, self.redirect_supported))
+            print('[OK] Client Info updated: Address: {} | Version {}.{}{} | Allows redirects: {}'.format(
+                self.addr, self.version_major, self.version_minor,
+                '.{}'.format(self.build_no) if self.build_no is not None else '', self.redirect_supported))
 
         def ingest(self, buf: bytearray, nbytes: int):
             self.input_buffer += buf[:nbytes]

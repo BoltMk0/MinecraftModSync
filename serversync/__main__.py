@@ -1,5 +1,6 @@
 import argparse
 from serversync.server import *
+from serversync.client import *
 from serversync import VERSION
 import sys
 from os import chdir
@@ -40,6 +41,7 @@ if __name__ == '__main__':
         chdir('mods')
 
     if pargs.mode == 'DEFAULT':
+        from serversync.client_gui import *
         app = QApplication(sys.argv)
         ex = ClientGUI()
         sys.exit(app.exec_())
