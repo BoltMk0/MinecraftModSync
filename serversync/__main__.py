@@ -165,6 +165,10 @@ if __name__ == '__main__':
     elif pargs.mode == 'SERVER':
         # Attempt to connect to existing server
         cli = Client()
+        if pargs.port is not None:
+            cli.conf.server_port = pargs.port
+            cli.conf.save()
+
         try:
             cli.connect('127.0.0.1')
             print('Found existing server instance. Requesting modlist refresh... ', end='')

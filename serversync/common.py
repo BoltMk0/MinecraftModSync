@@ -79,7 +79,7 @@ class ModInfo:
         try:
             modsinfo = toml.loads(zfile.read('META-INF/mods.toml').decode())
             if len(modsinfo['mods']) > 1:
-                raise ValueError('jar files with more than 1 mod is not currently supported!')
+                raise ValueError('{}: jar files with more than 1 mod is not currently supported!'.format(filepath))
             self.config = modsinfo['mods'][0]
         except KeyError as e:
             try:
