@@ -14,7 +14,7 @@ Name "ServerSync Installer"
 
 
 ; The file to write
-OutFile "serversync_1_3_installer.exe"
+OutFile "serversync_1_4_installer.exe"
 
 ; Request admin privileges for Windows Vista
 RequestExecutionLevel admin
@@ -34,6 +34,12 @@ Page instfiles
 
 Section "-setup"
   Var /GLOBAL pyver
+  Var /GLOBAL whl_name
+  Var /GLOBAL rel_ver
+  
+  StrCpy $whl_name "serversync-1.4-py3-none-any.whl"
+  StrCpy $rel_ver "v1.4"
+  
 SectionEnd
 
 ; The stuff to install
@@ -93,18 +99,18 @@ Section "ServerSync Module"
   install_serversync:
 
   ; download serversync wheel module
-  inetc::get https://github.com/BoltMk0/mc_serversync/releases/download/v1.3/serversync-1.3-py3-none-any.whl $TEMP\serversync-1.3-py3-none-any.whl
+  inetc::get https://github.com/BoltMk0/mc_serversync/releases/download/$rel_ver/$whl_name $TEMP\$whl_name
   Pop $0
   
   StrCmp $0 "OK" +3
   MessageBox MB_OK "Error when downloading serversync module. Please install manually from https://github.com/BoltMk0/mc_serversync"
   Quit
 
-  nsExec::ExecToStack 'python -m pip install $TEMP\serversync-1.3-py3-none-any.whl'
+  nsExec::ExecToStack 'python -m pip install $TEMP\$whl_name'
   Pop $0
   Pop $1
   
-  Delete $TEMP\serversync-1.3-py3-none-any.whl
+  Delete $TEMP\$whl_name
  
   ; Quit if error
   StrCmp $0 "0" done
