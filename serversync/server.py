@@ -6,13 +6,18 @@ from threading import Thread, Lock, ThreadError
 from os import makedirs, path
 from shutil import rmtree, copy
 import requests
-from flask import Flask, send_file, abort
+from flask import Flask, send_file, abort, request
+
+from datetime import datetime
 
 
 DEFAULT_HTTP_SERVER_PORT = 25568
 CONF_KEY_HTTP_SERVER_PORT = 'http_server_port'
 CONF_KEY_REDIRECT_MIN_MODSIZE = 'redirect_min_modsize'
+CONF_KEY_PREVIOUS_CLIENT_PROFILE = 'prev_profile'
 DEFAULT_REDIRECT_MIN_MODSIZE = 1048576
+DATETIME_CREATION_ID_FMT_STR = '%Y%m%d%H%M%S%f'
+DATETIME_CREATION_PRETTY_FMT_STR = '%d/%m/%Y %H:%M:%S.%f'
 
 
 class NoModsFoundError(Exception):
@@ -26,6 +31,7 @@ class ServerSyncServer():
         Manager for caching all mods at server launch (in case of mod changes during server runtime)
         """
         def __init__(self, cache_dir=None):
+            super().__init__()
             if cache_dir is None:
                 cache_dir = self.CACHE_DIR
             self.cachedir = cache_dir
@@ -126,6 +132,7 @@ class ServerSyncServer():
             self.output_buffer = self.output_buffer[n_sent:]
 
     def __init__(self, port: int = None, passkey=None):
+        self._creation_time = datetime.now()
         self.conf = ServerSyncConfig()
         if port is not None:
             self.conf.server_port = port
@@ -149,7 +156,8 @@ class ServerSyncServer():
             DownloadRequest.TYPE_STR: self._handle_download,
             SetProfileRequest.TYPE_STR: self._handle_set_profile,
             ServerRefreshRequest.TYPE_STR: self._handle_refresh_request,
-            ServerStopRequest.TYPE_STR: self._handle_stop_request
+            ServerStopRequest.TYPE_STR: self._handle_stop_request,
+            RevertProfileRequest.TYPE_STR: self._handle_revert_profile_request
         }
 
         self.modcache = self.ModCache()
@@ -199,6 +207,22 @@ class ServerSyncServer():
     @server_side_mod_ids.setter
     def server_side_mod_ids(self, mids: [str]):
         self.conf[CONF_KEY_KNOWN_SERVER_SIDE_MODS] = mids
+
+    @property
+    def _previous_profile(self):
+        return self.conf[CONF_KEY_PREVIOUS_CLIENT_PROFILE] if CONF_KEY_PREVIOUS_CLIENT_PROFILE in self.conf else None
+
+    def _backup_client_profile(self):
+        self.conf[CONF_KEY_PREVIOUS_CLIENT_PROFILE] = [self.client_side_mod_ids, self.server_side_mod_ids]
+
+    def _restore_client_profile(self):
+        if self._previous_profile is None:
+            raise KeyError('No previous profile stored in config!')
+
+        [client_side, server_side] = self._previous_profile
+        self.client_side_mod_ids = client_side
+        self.server_side_mod_ids = server_side
+        del self.conf[CONF_KEY_PREVIOUS_CLIENT_PROFILE]
 
     def _handle_legacy(self, client: ClientHandler, msg: bytes):
         # Strip off any null bytes
@@ -310,13 +334,14 @@ class ServerSyncServer():
                 print('[WN] Client profile set failed due to missing passkey')
                 client.send(ErrorMessage(SetProfileRequest.ERROR_CODE_MISSING_PASSKEY,
                                       'Passkey is missing from request').encode())
-                raise ValueError('Missing passkey')
+                # raise ValueError('Missing passkey')
+                return
             if cli_passkey != self.passkey:
                 print('[WN] Client profile set failed due to invalid passkey: "{}"'.format(cli_passkey))
                 client.send(ErrorMessage(SetProfileRequest.ERROR_CODE_INVALID_PASSKEY, 'Invalid passkey').encode())
-                raise ValueError('Invalid passkey: {}'.format(cli_passkey))
+                # raise ValueError('Invalid passkey: {}'.format(cli_passkey))
+                return
 
-        print('Handling set_profile request')
         client_mods = msg[SetProfileRequest.KEY_CLIENT_MODS]
 
         client_only_mod_ids = []
@@ -334,18 +359,43 @@ class ServerSyncServer():
                         if mid not in server_only_mod_ids:
                             server_only_mod_ids.append(mid)
 
+                self._backup_client_profile()
                 self.client_side_mod_ids = client_only_mod_ids
                 self.server_side_mod_ids = server_only_mod_ids
 
                 self.conf.save()
 
                 client.send(SuccessMessage().encode())
-                print('[OK] Client profile updated')
+                print('[OK] Client profile updated ({} client-side, {} server-side'.format(
+                    len(self.client_side_mod_ids), len(self.server_side_mod_ids)
+                ))
 
             except:
                 raise
             finally:
                 self.modcache_lock.release()
+
+    def _handle_revert_profile_request(self, client: ClientHandler, msg: Message):
+        if self.passkey is not None:
+            cli_passkey = msg[SetProfileRequest.KEY_PASSKEY]
+            if cli_passkey is None:
+                print('[WN] Client profile set failed due to missing passkey')
+                client.send(ErrorMessage(SetProfileRequest.ERROR_CODE_MISSING_PASSKEY,
+                                      'Passkey is missing from request').encode())
+                # raise ValueError('Missing passkey')
+                return
+            if cli_passkey != self.passkey:
+                print('[WN] Client profile set failed due to invalid passkey: "{}"'.format(cli_passkey))
+                client.send(ErrorMessage(SetProfileRequest.ERROR_CODE_INVALID_PASSKEY, 'Invalid passkey').encode())
+                # raise ValueError('Invalid passkey: {}'.format(cli_passkey))
+                return
+
+        try:
+            self._restore_client_profile()
+            print('[OK] Profile restored!')
+            client.send(SuccessMessage().encode())
+        except KeyError:
+            client.send(ErrorMessage(RevertProfileRequest.ERROR_CODE_NO_REVERT_STATE, 'No saved client profile state to revert').encode())
 
     def _handle_refresh_request(self, client: ClientHandler, msg: Message):
         self.launch_modlist_update_thread()
@@ -439,6 +489,19 @@ class ServerSyncServer():
                     else:
                         return abort(500)
 
+                # Machanism for detecting own http server (in case of bad redirect to another machine)
+                @self.http_server.route('/ping')
+                def handle_ping():
+                    timestamp = request.args.get('creation_id')
+                    if timestamp is None or timestamp == self._creation_time.strftime(DATETIME_CREATION_ID_FMT_STR):
+                        return '[OK] ServerSync v{} HTTP Server ({}) (Started {})'.format(
+                            VERSION, 'active' if self.http_server is not None else 'inactive',
+                            self._creation_time.strftime(DATETIME_CREATION_PRETTY_FMT_STR))
+                    else:
+                        return '[ER] Mismatching creation time ({} != {}).\n' \
+                               'Likely cause: Attempt to reach wrong server.'.format(
+                            timestamp, self._creation_time.strftime(DATETIME_CREATION_ID_FMT_STR)), 409
+
                 @self.http_server.route('/conf')
                 def get_conf():
                     return json.dumps({k: self.conf[k] for k in self.conf if k not in ['passkey']}, indent=4)
@@ -454,10 +517,17 @@ class ServerSyncServer():
                             self.modcache_lock.release()
 
                 self.http_server_thread.start()
-                test_url = 'http://{}:{}/conf'.format(self.public_ip(), self.http_server_port)
+                test_url = 'http://{}:{}/ping?creation_id={}'.format(
+                    self.public_ip(), self.http_server_port, self._creation_time.strftime(DATETIME_CREATION_ID_FMT_STR))
                 try:
-                    requests.get(test_url)
-                    print('[OK] Confirmed HTTP server is running and reachable.')
+                    response = requests.get(test_url)
+                    if response.status_code >= 300:
+                        print('[ER] HTTP get attempt failed: {}.\nPotential cause: Traffic to the given '
+                              'address/port is being forwarded to a different machine on the network\nDisabling '
+                              'http server.'.format(test_url))
+                        self.http_server = None
+                    else:
+                        print('[OK] Confirmed HTTP server is running and reachable.')
                 except Exception as e:
                     print('[ER] HTTP get attempt failed: {}.\n{}\nDisabling http server.'.format(test_url, e))
                     self.http_server = None

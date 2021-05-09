@@ -2,8 +2,9 @@
 from os import getcwd
 import sys
 from serversync.common import *
+from serversync.client import *
 
-from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QMessageBox, QGridLayout, QLabel, QCheckBox
+from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QMessageBox, QGridLayout, QLabel, QCheckBox, QVBoxLayout
 import sys
 
 from socket import socket, SOCK_STREAM, AF_INET, error, gethostbyname, gaierror, timeout
@@ -64,6 +65,7 @@ class SettingsWidget(QWidget):
     def __init__(self):
         super().__init__()
         self.initUI()
+        self._set_profile_box = None
 
     def _reset(self):
         conf = ServerSyncConfig()
@@ -83,8 +85,8 @@ class SettingsWidget(QWidget):
             except gaierror:
                 QMessageBox.about(self, "Invalid hostname", 'WARNING: Unable to resolve hostname: "{}"'.format(conf.server_ip))
             conf.save()
-            QMessageBox.about(self, 'Config saved', 'Config saved')
-            self._reset()
+            QMessageBox.about(self, 'Config saved', 'Config saved to {}'.format(path.abspath(conf.filepath)))
+            self.close()
 
         except ValueError:
             QMessageBox.about(self, "Invalid port value", 'Invalid port value "{}". Must be an integer.'.format(self.port_option.input.text()))
@@ -126,6 +128,16 @@ class SettingsWidget(QWidget):
         finally:
             sock.close()
 
+    def _set_profile_pressed(self):
+        if self._set_profile_box is not None:
+            self._set_profile_box.close()
+        self._set_profile_box = SubmitClientConfigPopup()
+
+    def _revert_profile_pressed(self):
+        if self._set_profile_box is not None:
+            self._set_profile_box.close()
+        self._set_profile_box = SubmitClientConfigPopup(revert_mode=True)
+
     def initUI(self):
         grid = QGridLayout()
         self.setLayout(grid)
@@ -138,22 +150,154 @@ class SettingsWidget(QWidget):
         grid.addWidget(QLabel("Allow Redirects"), 3, 0)
         grid.addWidget(self.enable_redirects, 3, 1)
 
+        grid.addWidget(QLabel('(Admin) Client Profile'), 4, 0)
+        set_profile_btn = QPushButton('Set Profile', self)
+        set_profile_btn.clicked.connect(self._set_profile_pressed)
+        revert_profile_btn = QPushButton('Revert', self)
+        revert_profile_btn.clicked.connect(self._revert_profile_pressed)
+        grid.addWidget(set_profile_btn, 4, 1)
+        grid.addWidget(revert_profile_btn, 4, 2)
+
         reset_btn = QPushButton()
         reset_btn.setText('Reset')
         reset_btn.clicked.connect(self._reset)
-        grid.addWidget(reset_btn, 4, 0)
+        grid.addWidget(reset_btn, 5, 0)
 
         test_btn = QPushButton()
         test_btn.setText('Test')
         test_btn.clicked.connect(self._test)
-        grid.addWidget(test_btn, 4, 1)
+        grid.addWidget(test_btn, 5, 1)
 
         save_btn = QPushButton()
         save_btn.setText('Save')
         save_btn.clicked.connect(self._save)
-        grid.addWidget(save_btn, 4, 2)
+        grid.addWidget(save_btn, 5, 2)
 
         self._reset()
+        self.show()
+
+
+class SubmitClientConfigPopup(QWidget):
+
+    def __init__(self, revert_mode=False):
+        super().__init__()
+        self.initUI()
+        self.setFixedWidth(300)
+        self._revert_mode = revert_mode
+
+    def _submit(self):
+        self.submit_button.setEnabled(False)
+        self.input.setEnabled(False)
+        try:
+            self.set_message('Building profile...')
+            modlist = list_mods_in_dir()
+            profile = {mid: modlist[mid].to_dict() for mid in modlist}
+            cli = Client()
+            self.set_message('Connecting to server ({}:{})...'.format(cli.conf.server_ip, cli.conf.server_port))
+            try:
+                cli.connect()
+            except Exception as e:
+                QMessageBox.about(self, 'Error', 'Unable to connect to server: {}'.format(str(e)))
+                return
+            try:
+                if self._revert_mode:
+                    self.set_message('Reverting client profile...')
+                    ret = cli.send(RevertProfileRequest(passkey=self.input.text()))
+                    if ret.TYPE_STR != SuccessMessage.TYPE_STR:
+                        QMessageBox.about(self, 'Error: unexpected response', 'Unexpected response from server:\n{}'.format(ret))
+                    else:
+                        # Now pull new modlist from server
+                        response = cli.get_server_mod_list()
+                        if response.type == ErrorMessage.type:
+                            QMessageBox.about(self, 'Warning',
+                                              'Profile was reverted, but the client was unable to pull the modlist from the server.')
+                        elif response.type != ListResponse.TYPE_STR:
+                            QMessageBox.about(self, 'Warning',
+                                              'Profile was reverted, but the client received an unexpected response to modlist:\n{}'.format(
+                                                  str(response)))
+                        else:
+                            server_modlist = response[ListResponse.KEY_REQUIRED_MODS]
+                            optional = response[ListResponse.KEY_CLIENT_SIDE_MODS]
+                            server_side = response[ListResponse.KEY_SERVER_SIDE_MODS]
+
+                            QMessageBox.about(self, 'Success!', 'Successfully reverted client profile\n'
+                                                                '   {} Required mods\n'
+                                                                '   {} Client-side mods\n'
+                                                                '   {} Server-side mods'.format(len(server_modlist),
+                                                                                                len(optional),
+                                                                                                len(server_side)))
+                else:
+                    self.set_message('Uploading profile to server...')
+                    to_send = SetProfileRequest(profile, passkey=self.input.text())
+                    ret = cli.send(to_send)
+
+                    if ret.type == ErrorMessage.TYPE_STR:
+                        QMessageBox.about(self, 'Error', 'An error occored when setting profile:\n({}) {}: {}'.format(
+                            ret[ErrorMessage.KEY_CODE], ret[ErrorMessage.KEY_TYPE], ret[ErrorMessage.KEY_MESSAGE]))
+                        return
+                    elif ret['type'] == SuccessMessage.TYPE_STR:
+                        QMessageBox.about(self, 'Success!', 'Successfully updated server profile!')
+                    elif ret['type'] == DownloadRequest.TYPE_STR:
+                        # Server wants to download copies of client side mods first.
+                        while True:
+                            self.set_message('Uploading {} to server...'.format(ret[DownloadRequest.KEY_ID]))
+                            if ret['type'] == DownloadRequest.TYPE_STR:
+                                mod_id = ret[DownloadRequest.KEY_ID]
+                                mod = modlist[mod_id]
+                                print('Uploading {}... '.format(mod.name), end='')
+                                with open(mod.filepath, 'rb') as file:
+                                    data = file.read()
+                                ret = Message.decode(cli.send_raw(data))
+                                print('[OK] Sent')
+                            elif ret['type'] == SuccessMessage.TYPE_STR:
+                                break
+                            else:
+                                raise UnexpectedResponseError(str(ret))
+
+                    # Now pull new modlist from server
+                    response = cli.get_server_mod_list()
+                    if response.type == ErrorMessage.type:
+                        QMessageBox.about(self, 'Warning', 'Profile was set, but the client was unable to pull the modlist from the server.')
+                    elif response.type != ListResponse.TYPE_STR:
+                        QMessageBox.about(self, 'Warning', 'Profile was set, but the client received an unexpected response to modlist:\n{}'.format(str(response)))
+                    else:
+                        server_modlist = response[ListResponse.KEY_REQUIRED_MODS]
+                        optional = response[ListResponse.KEY_CLIENT_SIDE_MODS]
+                        server_side = response[ListResponse.KEY_SERVER_SIDE_MODS]
+
+                        QMessageBox.about(self, 'Success!', 'Successfully set client profile\n'
+                                                            '   {} Required mods\n'
+                                                            '   {} Client-side mods\n'
+                                                            '   {} Server-side mods'.format(len(server_modlist), len(optional), len(server_side)))
+
+            except Exception as e:
+                QMessageBox.about(self, 'Error', 'An unexpected error occured during upload:\n{}'.format(str(e)))
+                return
+        except:
+            raise
+        finally:
+            self.submit_button.setEnabled(True)
+            self.input.setEnabled(True)
+            self.set_message('Enter passkey (if required)')
+
+    def set_message(self, msg: str):
+        self.label.setText(msg)
+
+    def initUI(self):
+        layout = QVBoxLayout()
+        self.setLayout(layout)
+        self.setWindowTitle('Enter Passkey')
+
+        self.label = QLabel('Enter passkey (if required)', self)
+        self.input = QLineEdit(self)
+        self.submit_button = QPushButton('Submit', self)
+
+        layout.addWidget(self.label)
+        layout.addWidget(self.input)
+        layout.addWidget(self.submit_button)
+
+        self.submit_button.pressed.connect(self._submit)
+
         self.show()
 
 
@@ -161,6 +305,7 @@ def config_editor_session():
     app = QApplication(sys.argv)
     ex = SettingsWidget()
     sys.exit(app.exec_())
+
 
 if __name__ == '__main__':
     config_editor_session()

@@ -1,7 +1,8 @@
 from os import path, listdir, getcwd, remove
 import zipfile
 import json
-import toml
+
+from serversync import toml
 from serversync import VERSION
 
 
@@ -78,18 +79,19 @@ class ModInfo:
         self.fabric = False
         try:
             modsinfo = toml.loads(zfile.read('META-INF/mods.toml').decode())
-            if len(modsinfo['mods']) > 1:
-                raise ValueError('{}: jar files with more than 1 mod is not currently supported!'.format(filepath))
-            self.config = modsinfo['mods'][0]
+            self.configs = modsinfo['mods']
         except KeyError as e:
             try:
                 fabric_conf = json.loads(zfile.read('fabric.mod.json').decode())
-                self.config = {'displayName': fabric_conf['name'],
+                self.configs = [{'displayName': fabric_conf['name'],
                                'version': fabric_conf['version'],
-                               'modId': fabric_conf['id']}
+                               'modId': fabric_conf['id']}]
                 self.fabric = True
             except:
                 raise KeyError('No META-INF/mods.toml or fabric.mod.json found in mod file: {}!'.format(self.filepath))
+        except:
+            print('Error when reading {}'.format(filepath))
+            raise
         try:
             self.manifest = parse_jar_manifest(zfile.read('META-INF/MANIFEST.MF').decode())
         except KeyError:
@@ -97,22 +99,35 @@ class ModInfo:
         pass
 
     @property
+    def config(self):
+        return self.configs[0]
+
+    @property
     def name(self):
-        return self.config['displayName']
+        return ';'.join(conf['displayName'] for conf in self.configs if 'displayName' in conf)
 
     @property
     def version(self):
-        ver = self.config['version']
-        if ver == '${file.jarVersion}':
+        to_ret = []
+        for conf in self.configs:
+            if 'version' not in conf:
+                continue
+
             try:
-                ver = self.manifest[0]['implementationversion']
-            except IndexError:
-                return None
-        return ver
+                if conf['version'] == '${file.jarVersion}':
+                    try:
+                        to_ret.append(self.manifest[0]['implementationversion'])
+                    except IndexError:
+                        pass
+                else:
+                    to_ret.append(conf['version'])
+            except KeyError:
+                raise
+        return ';'.join(to_ret) if len(to_ret) > 0 else None
 
     @property
     def id(self):
-        return self.config['modId']
+        return ';'.join(conf['modId'] for conf in self.configs if 'modId' in conf)
 
     @property
     def size(self):
@@ -126,6 +141,9 @@ class ModInfo:
             'filename': path.basename(self.filepath),
             'size': self.size
         }
+
+    def __eq__(self, other):
+        pass
 
 
 class ServerSyncConfig(dict):
@@ -393,17 +411,28 @@ class ListResponse(SuccessMessage):
         self[self.KEY_REQUIRED_MODS] = mods
 
 
-class SetProfileRequest(Message):
-    TYPE_STR = 'set_profile'
+class _MessageWithPasskey(Message):
     KEY_PASSKEY = 'passkey'
-    KEY_CLIENT_MODS = 'mods'
     ERROR_CODE_MISSING_PASSKEY = 100
     ERROR_CODE_INVALID_PASSKEY = 101
 
-    def __init__(self, client_mods={}, passkey=None):
+    def __init__(self, passkey=None):
         super().__init__()
         self[self.KEY_PASSKEY] = passkey
+
+
+class SetProfileRequest(_MessageWithPasskey):
+    TYPE_STR = 'set_profile'
+    KEY_CLIENT_MODS = 'mods'
+
+    def __init__(self, client_mods={}, passkey=None):
+        super().__init__(passkey=passkey)
         self[self.KEY_CLIENT_MODS] = client_mods
+
+
+class RevertProfileRequest(_MessageWithPasskey):
+    ERROR_CODE_NO_REVERT_STATE = 102
+    TYPE_STR = 'revert_profile'
 
 
 class PingMessage(Message):
@@ -426,6 +455,7 @@ class ServerRefreshRequest(Message):
 
 class ServerStopRequest(Message):
     TYPE_STR = 'stop'
+
 
 class RedirectMessage(Message):
     TYPE_STR = 'redirect'

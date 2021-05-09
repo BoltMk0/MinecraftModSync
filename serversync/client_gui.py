@@ -288,6 +288,8 @@ class ClientGUI(QWidget):
         self.thread.start()
 
     def _on_rescan_button_pressed(self):
+        self.conf.reload()
+        self.start_btn.setEnabled(False)
         try:
             self.client.connect()
         except UnsupportedServerError as e:

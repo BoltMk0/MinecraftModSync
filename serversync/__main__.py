@@ -31,6 +31,8 @@ if __name__ == '__main__':
                     help='Open the configuration GUI')
     ap.add_argument('--setProfile', action='store_const', const='SET_PROFILE', dest='mode',
                     help='Set client profile on server to determine server/client-specific mods')
+    ap.add_argument('--revertProfile', action='store_const', const='REVERT_PROFILE', dest='mode',
+                    help='Revert client profile on server to previous (if available)')
     ap.add_argument('--port', '-p', action='store', type=int, help='Server port')
     ap.add_argument('--passkey', action='store', type=str, help='Server passkey (used for setting client profile)')
     ap.add_argument('--hostname', '-ip', action='store', type=str, help='Server ip address/hostname')
@@ -244,55 +246,69 @@ if __name__ == '__main__':
         from serversync.config_gui import config_editor_session
         config_editor_session()
 
-    elif pargs.mode == 'SET_PROFILE':
-        print('Building profile')
-        modlist = list_mods_in_dir()
-        profile = {mid: modlist[mid].to_dict() for mid in modlist}
-        cli = Client()
+    elif pargs.mode in ('SET_PROFILE', 'REVERT_PROFILE'):
+
         print('Connecting to server... ', end='')
+        cli = Client()
         cli.connect()
         print('[OK]')
-        print('Uploading to server... ', end='')
-        to_send = SetProfileRequest(profile, passkey=pargs.passkey)
-        ret = cli.send(to_send)
 
-        if ret.type == ErrorMessage.TYPE_STR:
-            if ret[ErrorMessage.KEY_CODE] == SetProfileRequest.ERROR_CODE_MISSING_PASSKEY:
-                passkey = input('Enter passkey (required): ')
-                if len(passkey) == 0:
-                    exit(0)
-                to_send[SetProfileRequest.KEY_PASSKEY] = passkey
-                ret = cli.send(to_send)
-                if ret.type == ErrorMessage.TYPE_STR:
-                    print('[ER] Error when uploading to server: (Code {}) {}'.format(ret[ErrorMessage.KEY_CODE], ret[ErrorMessage.KEY_MESSAGE]), file=sys.stderr)
-                    exit(ret[ErrorMessage.KEY_CODE])
-                elif ret['type'] != 'success':
-                    print('[WN] Unhandled response: {}'.format(ret))
-            else:
-                print('[ER]')
-                print(ret['message'])
+        if pargs.mode == 'REVERT_PROFILE':
+            print('Reverting profile... ', end='')
+            ret = cli.send(RevertProfileRequest(passkey=pargs.passkey))
+            if ret.type == ErrorMessage.TYPE_STR:
+                print('[ER]\nError ({}) when reverting profile: {}'.format(ret.code, ret.message, file=sys.stderr))
+                exit(ret.code)
+            elif ret.type != SuccessMessage.TYPE_STR:
+                print('[WN]\nUnhandled response: {}'.format(ret))
                 exit(-1)
-        elif ret['type'] == SuccessMessage.TYPE_STR:
-            print('[OK]')
-        elif ret['type'] == DownloadRequest.TYPE_STR:
-            # Server wants to download copies of client side mods first.
-            while True:
-                if ret['type'] == DownloadRequest.TYPE_STR:
-                    mod_id = ret[DownloadRequest.KEY_ID]
-                    mod = modlist[mod_id]
-                    print('Uploading {}... '.format(mod.name), end='')
-                    with open(mod.filepath, 'rb') as file:
-                        data = file.read()
-                    ret = Message.decode(cli.send_raw(data))
-                    print('[OK] Sent')
-                elif ret['type'] == SuccessMessage.TYPE_STR:
-                    break
-                else:
-                    raise UnexpectedResponseError(str(ret))
-
+            else:
+                print('[OK] Success')
         else:
-            print('[WN] Unhandled response: {}'.format(ret))
-        print('[OK]', flush=True)
+            print('Building profile')
+            modlist = list_mods_in_dir()
+            profile = {mid: modlist[mid].to_dict() for mid in modlist}
+            print('Uploading to server... ', end='')
+            to_send = SetProfileRequest(profile, passkey=pargs.passkey)
+            ret = cli.send(to_send)
+
+            if ret.type == ErrorMessage.TYPE_STR:
+                if ret[ErrorMessage.KEY_CODE] == SetProfileRequest.ERROR_CODE_MISSING_PASSKEY:
+                    passkey = input('Enter passkey (required): ')
+                    if len(passkey) == 0:
+                        exit(0)
+                    to_send[SetProfileRequest.KEY_PASSKEY] = passkey
+                    ret = cli.send(to_send)
+                    if ret.type == ErrorMessage.TYPE_STR:
+                        print('[ER] Error when uploading to server: (Code {}) {}'.format(ret[ErrorMessage.KEY_CODE], ret[ErrorMessage.KEY_MESSAGE]), file=sys.stderr)
+                        exit(ret[ErrorMessage.KEY_CODE])
+                    elif ret['type'] != 'success':
+                        print('[WN] Unhandled response: {}'.format(ret))
+                else:
+                    print('[ER]')
+                    print(ret['message'])
+                    exit(-1)
+            elif ret['type'] == SuccessMessage.TYPE_STR:
+                print('[OK]')
+            elif ret['type'] == DownloadRequest.TYPE_STR:
+                # Server wants to download copies of client side mods first.
+                while True:
+                    if ret['type'] == DownloadRequest.TYPE_STR:
+                        mod_id = ret[DownloadRequest.KEY_ID]
+                        mod = modlist[mod_id]
+                        print('Uploading {}... '.format(mod.name), end='')
+                        with open(mod.filepath, 'rb') as file:
+                            data = file.read()
+                        ret = Message.decode(cli.send_raw(data))
+                        print('[OK] Sent')
+                    elif ret['type'] == SuccessMessage.TYPE_STR:
+                        break
+                    else:
+                        raise UnexpectedResponseError(str(ret))
+
+            else:
+                print('[WN] Unhandled response: {}'.format(ret))
+            print('[OK]', flush=True)
 
         response = cli.get_server_mod_list()
         if response.type == ErrorMessage.type:
@@ -320,7 +336,6 @@ if __name__ == '__main__':
             print('Server-side mods:')
             for mid in server_side:
                 print('  - {}'.format(cli.get_mod_info(mid)['name']))
-
 
 
 
